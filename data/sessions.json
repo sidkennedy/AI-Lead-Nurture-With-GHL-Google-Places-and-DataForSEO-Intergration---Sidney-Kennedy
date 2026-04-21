@@ -8196,5 +8196,21 @@
     "contactId": null,
     "createdAt": 1776810913653,
     "confirmedPlaceId": "ChIJzQWv7ElewokRGylucTKXBhQ"
+  },
+  "5c33769a-7adc-49a3-adff-26530b5ada47": {
+    "sessionId": "5c33769a-7adc-49a3-adff-26530b5ada47",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776811113553
   }
 }
