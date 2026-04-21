@@ -62,5 +62,46 @@
     "city": null,
     "contactId": null,
     "createdAt": 1776798892535
+  },
+  "c0370905-ae04-438f-94d4-3fa8e4163545": {
+    "sessionId": "c0370905-ae04-438f-94d4-3fa8e4163545",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Welcome to the Powered Up AI live demo. I'm going to walk you through a quick analysis of your practice — we'll look at where you're leaving revenue on the table and what we can do about it.\n\nFirst things first — what's your practice name exactly as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776799113977
+  },
+  "40cd58dc-c8e5-44da-9c61-517f1b8bb43d": {
+    "sessionId": "40cd58dc-c8e5-44da-9c61-517f1b8bb43d",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776799118743
   }
 }

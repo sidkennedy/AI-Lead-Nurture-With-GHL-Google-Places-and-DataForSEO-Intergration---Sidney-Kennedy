@@ -153,7 +153,7 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     const stream = await anthropic.messages.stream({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-5',
       max_tokens: 1024,
       system: systemContent,
       messages: history
