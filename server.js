@@ -356,7 +356,8 @@ app.get('/api/config', (req, res) => {
     calendarWidgetUrl: config.calendarWidgetUrl,
     brandName: config.brandName,
     headline: config.headline,
-    socialProofLines: config.socialProofLines
+    socialProofLines: config.socialProofLines,
+    mapsKey: process.env.GOOGLE_PLACES_KEY || ''
   });
 });
 

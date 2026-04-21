@@ -50,11 +50,22 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
 .dot-pulse:nth-child(3){animation-delay:0.4s}
 @keyframes dotPulse{0%,80%,100%{transform:scale(0.8);opacity:0.5}40%{transform:scale(1);opacity:1}}
 
-/* Scan card */
-.scan-card{background:#1E1E1E;border:1px solid #f59e0b;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;text-decoration:none;color:#fff;margin-top:2px}
-.scan-card svg{flex-shrink:0;color:#f59e0b}
-.scan-card-text{font-size:14px;font-weight:600}
-.scan-card-sub{font-size:12px;color:#888;margin-top:2px}
+/* Inline scan map card */
+.scan-map-card{width:92%;align-self:flex-start;background:#1E1E1E;border:1px solid #f59e0b;border-radius:18px;overflow:hidden;animation:msgIn 0.3s ease;margin-top:2px}
+.scan-map-header{padding:12px 14px 8px}
+.scan-map-title{font-size:14px;font-weight:700;color:#fff}
+.scan-map-sub{font-size:11px;color:#666;margin-top:2px}
+.scan-map-area{width:100%;height:270px;background:#1a1a1a;position:relative}
+.scan-map-area #gmapEl{width:100%;height:100%}
+.scan-map-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#555}
+.scan-map-legend{display:flex;gap:12px;padding:8px 14px;border-top:1px solid #2a2a2a}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#888}
+.legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.scan-map-stats{padding:6px 14px 10px;display:flex;flex-direction:column;gap:5px;border-top:1px solid #2a2a2a}
+.scan-stat-row{display:flex;align-items:center;gap:8px;font-size:13px;color:#ccc}
+.stat-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.scan-map-cta{padding:8px 14px 14px}
+.scan-map-cta a{display:block;background:#f59e0b;color:#000;text-align:center;font-weight:700;font-size:14px;padding:12px;border-radius:10px;text-decoration:none}
 
 /* Calendar widget */
 .calendar-bubble{background:#1E1E1E;border:1px solid #f59e0b;border-radius:14px;padding:12px;width:100%}
@@ -448,33 +459,14 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
   }
 
   function renderAIText(bubble, text) {
-    // Strip step markers from display
-    const display = text.replace(/\[STEP:[^\]]+\]/g, '').trim();
-
-    // Check for scan URL
-    const scanMatch = display.match(/https?:\/\/[^\s]+\/scan\/[a-f0-9-]+/);
-    if (scanMatch) {
-      // Will be finalized with scan card
-      bubble.textContent = display.replace(scanMatch[0], '').trim();
-      return;
-    }
+    const display = text.replace(/\[STEP:[^\]]+\]/g, '').replace(/https?:\/\/\S+\/scan\/[a-f0-9-]+/g, '').trim();
     bubble.textContent = display;
   }
 
   function finalizeAIResponse(bubble, fullText) {
     if (!bubble) return;
-    const display = fullText.replace(/\[STEP:[^\]]+\]/g, '').trim();
-
-    // Check for scan URL → render as card
-    const scanMatch = display.match(/(https?:\/\/[^\s]+\/scan\/[a-f0-9-]+)/);
-    if (scanMatch) {
-      const beforeUrl = display.replace(scanMatch[0], '').trim();
-      if (beforeUrl) bubble.textContent = beforeUrl;
-      appendScanCard(scanMatch[1]);
-      if (navigator.vibrate) navigator.vibrate(50);
-    } else {
-      bubble.textContent = display;
-    }
+    const display = fullText.replace(/\[STEP:[^\]]+\]/g, '').replace(/https?:\/\/\S+\/scan\/[a-f0-9-]+/g, '').trim();
+    bubble.textContent = display;
 
     // Calendar widget
     if (currentStep === 'booking' || /grab your time slot|pick a morning|pull up the calendar|here's the link to book/i.test(display)) {
@@ -515,17 +507,167 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
     return div;
   }
 
-  function appendScanCard(url) {
+  async function appendScanMap() {
+    if (document.getElementById('inline-scan-map')) return; // already shown
+
     const chatArea = document.getElementById('chat-area');
-    const a = document.createElement('a');
-    a.className = 'scan-card msg ai';
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.onclick = () => { if (navigator.vibrate) navigator.vibrate(50); };
-    a.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><div><div class="scan-card-text">Tap to see your visibility map</div><div class="scan-card-sub">Google Maps • ${sessionData.city || 'your area'} • 5-mile radius</div></div>`;
-    chatArea.insertBefore(a, document.getElementById('typing'));
+
+    // Fetch scan data
+    let scanData = {};
+    try {
+      const r = await fetch('/api/scan/data/' + sessionId);
+      scanData = await r.json();
+    } catch {}
+
+    const sr = scanData.scanResults || {};
+    const lat = scanData.lat || 0;
+    const lng = scanData.lng || 0;
+    const practiceName = scanData.practiceName || 'Your Practice';
+    const city = scanData.city || sessionData.city || 'your area';
+    const comp = sr.topCompetitor;
+
+    const card = document.createElement('div');
+    card.className = 'scan-map-card';
+    card.innerHTML = `
+      <div class="scan-map-header">
+        <div class="scan-map-title">📍 ${practiceName} — Visibility Map</div>
+        <div class="scan-map-sub">audiologist · 5-mile radius · ${city}</div>
+      </div>
+      <div class="scan-map-area">
+        <div id="gmapEl" style="width:100%;height:100%"></div>
+        <div class="scan-map-loading" id="map-loading-msg">Loading map…</div>
+      </div>
+      <div class="scan-map-legend">
+        <div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>Top 3</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>4–10</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Invisible</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;border:2px solid #fff"></span>Your location</div>
+      </div>
+      <div class="scan-map-stats">
+        <div class="scan-stat-row"><span class="stat-dot" style="background:#22c55e"></span>Visible top-3: <strong>${sr.visibleTop3 || 0}/${sr.totalPoints || 25} spots</strong></div>
+        <div class="scan-stat-row"><span class="stat-dot" style="background:#ef4444"></span>Invisible: <strong>${sr.invisible || 0}/${sr.totalPoints || 25} (${sr.percentInvisible || 0}%)</strong></div>
+        ${comp ? `<div class="scan-stat-row"><span class="stat-dot" style="background:#888"></span>Top competitor: <strong>${comp.name}</strong> — visible at ${comp.visibleIn} of your blind spots</div>` : ''}
+        ${sr.averageRankWhereVisible ? `<div class="scan-stat-row"><span class="stat-dot" style="background:#888"></span>Your avg rank where visible: <strong>#${sr.averageRankWhereVisible}</strong></div>` : ''}
+      </div>
+      <div class="scan-map-cta">
+        <a href="${window.CALENDAR_URL || '#'}" target="_blank">Book a 10-min call to fix this →</a>
+      </div>
+    `;
+    card.id = 'inline-scan-map';
+    chatArea.insertBefore(card, document.getElementById('typing'));
     scrollChat();
+    if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+
+    // Load Google Maps and render
+    if (lat && lng && sr.gridResults) {
+      loadGoogleMapsAndRender(lat, lng, sr.gridResults);
+    } else {
+      const msg = document.getElementById('map-loading-msg');
+      if (msg) msg.textContent = 'Map data unavailable';
+    }
+  }
+
+  function loadGoogleMapsAndRender(lat, lng, grid) {
+    if (window._gmapsLoaded) {
+      renderGoogleMap(lat, lng, grid);
+      return;
+    }
+    const key = window._mapsKey || '';
+    if (!key) {
+      const msg = document.getElementById('map-loading-msg');
+      if (msg) msg.textContent = 'Map unavailable';
+      return;
+    }
+    window._gmapsPending = { lat, lng, grid };
+    window._initScanMap = function() {
+      window._gmapsLoaded = true;
+      const p = window._gmapsPending;
+      if (p) renderGoogleMap(p.lat, p.lng, p.grid);
+    };
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=_initScanMap&v=weekly`;
+    script.async = true;
+    script.onerror = () => {
+      const msg = document.getElementById('map-loading-msg');
+      if (msg) msg.textContent = 'Map unavailable';
+    };
+    document.head.appendChild(script);
+  }
+
+  function renderGoogleMap(lat, lng, grid) {
+    const el = document.getElementById('gmapEl');
+    const loadMsg = document.getElementById('map-loading-msg');
+    if (!el || !window.google) return;
+    if (loadMsg) loadMsg.style.display = 'none';
+
+    const darkStyle = [
+      {elementType:'geometry',stylers:[{color:'#1a1a2e'}]},
+      {elementType:'labels.text.fill',stylers:[{color:'#746855'}]},
+      {elementType:'labels.text.stroke',stylers:[{color:'#242f3e'}]},
+      {featureType:'road',elementType:'geometry',stylers:[{color:'#2c2c3e'}]},
+      {featureType:'road',elementType:'geometry.stroke',stylers:[{color:'#212a37'}]},
+      {featureType:'road',elementType:'labels.text.fill',stylers:[{color:'#9ca5b3'}]},
+      {featureType:'road.highway',elementType:'geometry',stylers:[{color:'#746855'}]},
+      {featureType:'water',elementType:'geometry',stylers:[{color:'#0e1626'}]},
+      {featureType:'water',elementType:'labels.text.fill',stylers:[{color:'#515c6d'}]},
+      {featureType:'poi',stylers:[{visibility:'off'}]},
+      {featureType:'transit',stylers:[{visibility:'off'}]}
+    ];
+
+    const map = new google.maps.Map(el, {
+      center: { lat, lng },
+      zoom: 12,
+      disableDefaultUI: true,
+      zoomControl: true,
+      zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
+      gestureHandling: 'cooperative',
+      styles: darkStyle
+    });
+
+    // Grid circles
+    grid.forEach(point => {
+      const rank = point.rank;
+      let fillColor = '#ef4444';
+      if (rank && rank <= 3) fillColor = '#22c55e';
+      else if (rank && rank <= 10) fillColor = '#f59e0b';
+
+      const circle = new google.maps.Circle({
+        strokeColor: 'rgba(255,255,255,0.4)',
+        strokeOpacity: 0.8,
+        strokeWeight: 1.5,
+        fillColor,
+        fillOpacity: 0.75,
+        map,
+        center: { lat: point.lat, lng: point.lng },
+        radius: 600 // meters
+      });
+
+      const infoLines = (point.topBusinesses || []).slice(0, 3).map((b, i) => `#${i + 1} ${b.name}`).join('<br>');
+      const info = new google.maps.InfoWindow({
+        content: `<div style="background:#1E1E1E;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;min-width:140px">
+          <div style="font-weight:700;color:${fillColor};margin-bottom:4px">${rank ? `Rank #${rank}` : 'Not visible'}</div>
+          ${infoLines || 'No data'}
+        </div>`
+      });
+
+      circle.addListener('click', () => {
+        info.setPosition({ lat: point.lat, lng: point.lng });
+        info.open(map);
+      });
+    });
+
+    // Practice marker — gold ring
+    new google.maps.Circle({
+      strokeColor: '#f59e0b',
+      strokeOpacity: 1,
+      strokeWeight: 3,
+      fillColor: '#f59e0b',
+      fillOpacity: 1,
+      map,
+      center: { lat, lng },
+      radius: 300,
+      zIndex: 10
+    });
   }
 
   function appendCalendarWidget() {
@@ -647,6 +789,7 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
     const label = document.getElementById('step-label');
     label.firstChild.textContent = 'Scan complete — results ready';
     document.getElementById('progress-bar').classList.add('pulse');
+    appendScanMap();
   }
 
   // ── Session API ──────────────────────────────────────────────────────────────
@@ -707,9 +850,10 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
 
   sendBtn.addEventListener('click', sendMessage);
 
-  // Expose calendar URL from server config
+  // Load config (calendar URL + Maps key)
   fetch('/api/config').then(r => r.json()).then(d => {
     if (d.calendarWidgetUrl) window.CALENDAR_URL = d.calendarWidgetUrl;
+    if (d.mapsKey) window._mapsKey = d.mapsKey;
   }).catch(() => {});
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
