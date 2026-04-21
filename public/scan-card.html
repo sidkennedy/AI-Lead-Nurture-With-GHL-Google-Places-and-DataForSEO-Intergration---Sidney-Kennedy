@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Local Visibility Report</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --red: #E8393A;
+  --amber: #F59E0B;
+  --dark: #111827;
+  --mid: #374151;
+  --muted: #6B7280;
+  --light: #F9FAFB;
+  --border: #E5E7EB;
+  --white: #FFFFFF;
+}
+
+html, body {
+  background: var(--white);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  color: var(--dark);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Loading screen ── */
+#loading-screen {
+  position: fixed; inset: 0; background: var(--white);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  z-index: 100;
+}
+.loading-wave {
+  display: flex; gap: 5px;
+}
+.loading-wave span {
+  width: 5px; height: 24px; background: var(--amber); border-radius: 3px;
+  animation: wave 1s ease-in-out infinite;
+}
+.loading-wave span:nth-child(2) { animation-delay: .1s; }
+.loading-wave span:nth-child(3) { animation-delay: .2s; }
+.loading-wave span:nth-child(4) { animation-delay: .3s; }
+.loading-wave span:nth-child(5) { animation-delay: .4s; }
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.4); opacity: .5; }
+  50%       { transform: scaleY(1);   opacity: 1; }
+}
+#loading-screen p { font-size: 14px; color: var(--muted); }
+
+/* ── Top brand bar ── */
+.brand-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--white);
+}
+.brand-name {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; letter-spacing: .5px; color: var(--dark);
+}
+.brand-name svg { color: var(--amber); }
+.report-tag {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--muted); font-weight: 500;
+}
+.report-tag svg { color: var(--red); }
+
+/* ── Hero ── */
+.hero {
+  padding: 28px 20px 20px;
+  background: var(--white);
+}
+.hero h1 {
+  font-size: 28px; font-weight: 800; line-height: 1.2;
+  color: var(--dark);
+}
+.hero h1 .red { color: var(--red); display: block; }
+.hero-sub {
+  font-size: 14px; color: var(--muted); margin-top: 10px; line-height: 1.5;
+}
+.alert-pill {
+  display: flex; align-items: center; gap: 10px;
+  background: #FEF2F2; border: 1px solid #FECACA;
+  border-radius: 12px; padding: 12px 14px; margin-top: 16px;
+}
+.alert-pill svg { color: var(--red); flex-shrink: 0; }
+.alert-pill p { font-size: 13px; color: #B91C1C; font-weight: 500; line-height: 1.4; }
+
+/* ── Section header ── */
+.section-label {
+  padding: 20px 20px 12px;
+  font-size: 16px; font-weight: 700; color: var(--dark);
+  border-top: 8px solid var(--light);
+}
+
+/* ── Visibility layout ── */
+.visibility-wrap {
+  display: flex; flex-direction: column; gap: 0;
+  background: var(--white);
+}
+@media (min-width: 640px) {
+  .visibility-wrap { flex-direction: row; }
+  .map-panel { width: 52%; }
+  .stats-panel { width: 48%; border-left: 1px solid var(--border); border-top: none !important; }
+}
+
+/* ── Map panel ── */
+.map-panel {
+  position: relative; background: #1a1a2e;
+  min-height: 240px;
+}
+#gmapEl { width: 100%; height: 100%; min-height: 240px; }
+.map-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: #888;
+}
+.map-legend {
+  position: absolute; bottom: 10px; left: 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  background: rgba(0,0,0,0.7); border-radius: 8px; padding: 8px 10px;
+}
+.legend-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: #ddd;
+}
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Stats panel ── */
+.stats-panel {
+  padding: 16px 20px; border-top: 1px solid var(--border);
+}
+.versus-row {
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: start;
+  margin-bottom: 14px;
+}
+.versus-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px;
+}
+.versus-you .versus-label { color: var(--muted); }
+.versus-comp .versus-label { color: var(--red); }
+.vs-divider {
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  padding-top: 18px; text-align: center;
+}
+.rating-val {
+  font-size: 26px; font-weight: 800; line-height: 1;
+}
+.versus-you .rating-val { color: var(--dark); }
+.versus-comp .rating-val { color: var(--red); }
+.stars { display: flex; gap: 2px; margin: 4px 0; }
+.star { font-size: 14px; }
+.review-count { font-size: 12px; color: var(--muted); }
+
+.impact-pill {
+  display: flex; align-items: center; gap: 8px;
+  background: #FEF2F2; border: 1px solid #FECACA;
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 14px;
+}
+.impact-pill svg { color: var(--red); flex-shrink: 0; }
+.impact-pill p { font-size: 12px; color: #B91C1C; font-weight: 600; line-height: 1.3; }
+
+.metrics-row {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.metric-box {
+  background: var(--light); border-radius: 10px; padding: 10px 8px; text-align: center;
+}
+.metric-icon { font-size: 18px; margin-bottom: 4px; }
+.metric-val { font-size: 18px; font-weight: 800; color: var(--dark); line-height: 1; }
+.metric-label { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.2; }
+
+/* ── Scan stats strip ── */
+.scan-strip {
+  display: flex; gap: 0;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--white);
+}
+.scan-strip-item {
+  flex: 1; padding: 14px 10px; text-align: center;
+  border-right: 1px solid var(--border);
+}
+.scan-strip-item:last-child { border-right: none; }
+.strip-val { font-size: 20px; font-weight: 800; }
+.strip-val.green { color: #16a34a; }
+.strip-val.red { color: var(--red); }
+.strip-val.amber { color: var(--amber); }
+.strip-sub { font-size: 10px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
+
+/* ── Features ── */
+.features-section {
+  padding: 24px 20px;
+  background: var(--white);
+  border-top: 8px solid var(--light);
+}
+.features-eyebrow {
+  text-align: center; font-size: 15px; color: var(--mid); margin-bottom: 4px;
+}
+.features-eyebrow strong { color: var(--red); }
+.features-title {
+  text-align: center; font-size: 18px; font-weight: 800; color: var(--dark);
+  margin-bottom: 20px;
+}
+.features-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+}
+.feature-card {
+  background: var(--light); border-radius: 12px; padding: 14px;
+}
+.feature-icon { font-size: 22px; margin-bottom: 6px; }
+.feature-title { font-size: 13px; font-weight: 700; color: var(--dark); margin-bottom: 3px; }
+.feature-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+/* ── CTA footer ── */
+.cta-footer {
+  background: #111827; padding: 28px 20px 36px;
+}
+.cta-footer h2 {
+  font-size: 20px; font-weight: 800; color: var(--white); line-height: 1.3;
+  margin-bottom: 4px;
+}
+.cta-footer h2 span { color: var(--red); }
+.cta-footer p {
+  font-size: 13px; color: #9CA3AF; margin-bottom: 20px; line-height: 1.5;
+}
+.cta-btn {
+  display: block; background: var(--amber); color: #000;
+  text-align: center; font-weight: 800; font-size: 16px;
+  padding: 16px; border-radius: 12px; text-decoration: none;
+  letter-spacing: .3px;
+}
+.cta-btn:hover { background: #FBB040; }
+.cta-note {
+  text-align: center; font-size: 12px; color: #6B7280; margin-top: 10px;
+}
+.cta-note svg { vertical-align: middle; margin-right: 3px; }
+</style>
+</head>
+<body>
+
+<div id="loading-screen">
+  <div class="loading-wave">
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <p>Pulling your visibility data…</p>
+</div>
+
+<div id="card" style="display:none">
+
+  <!-- Brand Bar -->
+  <div class="brand-bar">
+    <div class="brand-name">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M9 18V5l12-2v13"/>
+        <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+      </svg>
+      AUDIO GROWTH PARTNERS
+    </div>
+    <div class="report-tag">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Local Visibility Report
+    </div>
+  </div>
+
+  <!-- Hero -->
+  <div class="hero">
+    <h1>
+      Patients are searching.
+      <span class="red">But they're finding<br>your competitor.</span>
+    </h1>
+    <p class="hero-sub">We analyzed your local presence.<br>The results aren't great.</p>
+    <div class="alert-pill">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+      <p>You're missing out on patients,<br>reviews, and serious growth.</p>
+    </div>
+  </div>
+
+  <!-- Local Visibility Section -->
+  <div class="section-label">Your local visibility</div>
+
+  <div class="visibility-wrap">
+    <!-- Map -->
+    <div class="map-panel">
+      <div id="gmapEl"></div>
+      <div class="map-loading" id="map-loading-msg">Loading map…</div>
+      <div class="map-legend" id="map-legend" style="display:none">
+        <div class="legend-row"><span class="legend-dot" style="background:#22c55e"></span>You — top 3</div>
+        <div class="legend-row"><span class="legend-dot" style="background:#f59e0b"></span>You — rank 4–10</div>
+        <div class="legend-row"><span class="legend-dot" style="background:#ef4444"></span>Not visible</div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-panel">
+      <div class="versus-row">
+        <div class="versus-you">
+          <div class="versus-label">You</div>
+          <div class="rating-val" id="your-rating">—</div>
+          <div class="stars" id="your-stars"></div>
+          <div class="review-count" id="your-reviews">— reviews</div>
+        </div>
+        <div class="vs-divider">vs</div>
+        <div class="versus-comp" style="text-align:right">
+          <div class="versus-label">Top Competitor</div>
+          <div class="rating-val" id="comp-rating">—</div>
+          <div class="stars" id="comp-stars" style="justify-content:flex-end"></div>
+          <div class="review-count" id="comp-reviews">— reviews</div>
+        </div>
+      </div>
+
+      <div class="impact-pill" id="impact-pill" style="display:none">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        <p id="impact-text"></p>
+      </div>
+
+      <div class="metrics-row">
+        <div class="metric-box">
+          <div class="metric-icon">🔍</div>
+          <div class="metric-val" id="monthly-searches">—</div>
+          <div class="metric-label">Monthly searches in your area</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-icon">👁</div>
+          <div class="metric-val" id="pct-competitor">—</div>
+          <div class="metric-label">Go to a competitor instead</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-icon">👤</div>
+          <div class="metric-val" id="new-patients">—</div>
+          <div class="metric-label">New patients / mo for top competitor</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scan stats strip -->
+  <div class="scan-strip">
+    <div class="scan-strip-item">
+      <div class="strip-val green" id="strip-visible">—</div>
+      <div class="strip-sub">Map spots<br>you rank top 3</div>
+    </div>
+    <div class="scan-strip-item">
+      <div class="strip-val red" id="strip-invisible">—</div>
+      <div class="strip-sub">Map spots<br>you're invisible</div>
+    </div>
+    <div class="scan-strip-item">
+      <div class="strip-val amber" id="strip-competitor">—</div>
+      <div class="strip-sub">Spots competitor<br>beats you</div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <div class="features-section">
+    <p class="features-eyebrow">It's not just reviews. It's <strong>everything.</strong></p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">📣</div>
+        <div class="feature-title">Referral Campaigns</div>
+        <div class="feature-desc">Turn happy patients into your best referral source.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⭐</div>
+        <div class="feature-title">Reputation Growth</div>
+        <div class="feature-desc">More 5-star reviews. More trust. More bookings.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📍</div>
+        <div class="feature-title">Stronger Visibility</div>
+        <div class="feature-desc">Show up where patients are actually searching.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📈</div>
+        <div class="feature-title">Sustainable Growth</div>
+        <div class="feature-desc">More patients. More revenue. Less effort.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CTA Footer -->
+  <div class="cta-footer">
+    <h2>Stop losing patients.<br><span>Start growing your practice.</span></h2>
+    <p>We help audiology practices get found,<br>get chosen, and grow — consistently.</p>
+    <a class="cta-btn" id="cta-btn" href="#" target="_blank">Get Your Free Growth Plan</a>
+    <p class="cta-note">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      No obligation. Just clarity.
+    </p>
+  </div>
+
+</div><!-- /card -->
+
+<script>
+const params = new URLSearchParams(location.search);
+const sessionId = params.get('session') || params.get('s') || '';
+let mapsKey = '';
+
+function starsHTML(rating, color) {
+  const full = Math.floor(rating);
+  const half = rating - full >= 0.5;
+  let html = '';
+  for (let i = 0; i < 5; i++) {
+    if (i < full) html += `<span class="star" style="color:${color}">★</span>`;
+    else if (i === full && half) html += `<span class="star" style="color:${color};opacity:.6">★</span>`;
+    else html += `<span class="star" style="color:#D1D5DB">★</span>`;
+  }
+  return html;
+}
+
+function formatNum(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1).replace('.0', '') + 'k';
+  return String(n);
+}
+
+async function pollReady() {
+  const data = await fetch('/api/scan/data/' + sessionId).then(r => r.json()).catch(() => ({}));
+  if (data.scanStatus === 'complete' && data.lat) return;
+  await new Promise(r => setTimeout(r, 1500));
+  return pollReady();
+}
+
+function render(d) {
+  const sr = d.scanResults || {};
+  const pop65 = d.populationOver65 || 45000;
+  const yourRating = d.rating || 0;
+  const yourReviews = d.reviews || 0;
+  const comp = d.topCompetitorResearch || null;
+  const scanComp = sr.topCompetitor || null;
+
+  // ── Ratings ──
+  document.getElementById('your-rating').textContent = yourRating ? yourRating.toFixed(1) : 'N/A';
+  document.getElementById('your-stars').innerHTML = yourRating ? starsHTML(yourRating, '#F59E0B') : '';
+  document.getElementById('your-reviews').textContent = yourReviews + ' total reviews';
+
+  const compName = comp?.name || scanComp?.name || 'Top Competitor';
+  const compRating = comp?.rating || 0;
+  const compReviews = comp?.reviews || 0;
+  document.getElementById('comp-rating').textContent = compRating ? compRating.toFixed(1) : 'N/A';
+  document.getElementById('comp-stars').innerHTML = compRating ? starsHTML(compRating, '#E8393A') : '';
+  document.getElementById('comp-reviews').textContent = (compReviews || '—') + ' total reviews';
+
+  // ── Impact pill ──
+  if (comp && yourReviews > 0 && compReviews > 0) {
+    const gap = Math.round(compReviews / Math.max(1, yourReviews));
+    if (gap >= 2) {
+      const pill = document.getElementById('impact-pill');
+      document.getElementById('impact-text').textContent = `${gap}× more reviews. They're chosen over you.`;
+      pill.style.display = 'flex';
+    }
+  } else if (comp) {
+    const pill = document.getElementById('impact-pill');
+    document.getElementById('impact-text').textContent = `${compName} dominates your local map — they're your biggest threat.`;
+    pill.style.display = 'flex';
+  }
+
+  // ── Derived metrics ──
+  const monthlySearches = Math.max(400, Math.round(pop65 * 0.11 / 12 / 50) * 50);
+  const pctToComp = Math.round((sr.totalPoints - (sr.visibleTop3 || 0)) / (sr.totalPoints || 25) * 100);
+  const newPatientsPerMo = Math.max(20, Math.round(pop65 / 100 / 12 * 0.4));
+
+  document.getElementById('monthly-searches').textContent = formatNum(monthlySearches);
+  document.getElementById('pct-competitor').textContent = pctToComp + '%';
+  document.getElementById('new-patients').textContent = newPatientsPerMo + '+';
+
+  // ── Scan strip ──
+  document.getElementById('strip-visible').textContent = `${sr.visibleTop3 || 0}/25`;
+  document.getElementById('strip-invisible').textContent = `${sr.invisible || 0}/25`;
+  document.getElementById('strip-competitor').textContent = scanComp ? `${scanComp.visibleIn}/25` : '—';
+
+  // ── CTA link ──
+  if (cfg && cfg.calendarWidgetUrl) {
+    document.getElementById('cta-btn').href = cfg.calendarWidgetUrl;
+  }
+
+  // ── Show card, hide loader ──
+  document.getElementById('loading-screen').style.display = 'none';
+  document.getElementById('card').style.display = 'block';
+
+  // ── Load Map ──
+  if (d.lat && d.lng && sr.gridResults?.length) {
+    loadMap(d.lat, d.lng, sr.gridResults);
+  } else {
+    document.getElementById('map-loading-msg').textContent = 'Map data unavailable';
+  }
+}
+
+// cfg needs to be accessible in render — store globally
+let cfg = {};
+
+async function initWithCfg() {
+  const r1 = fetch('/api/config').then(r => r.json()).catch(() => ({}));
+  cfg = await r1;
+  mapsKey = cfg.mapsKey || '';
+
+  if (!sessionId) {
+    document.getElementById('loading-screen').innerHTML =
+      '<p style="color:#888;font-size:14px;padding:40px 20px;text-align:center">No session ID provided.<br>Use ?session=xxx</p>';
+    return;
+  }
+
+  await pollReady();
+  const data = await fetch('/api/scan/data/' + sessionId).then(r => r.json()).catch(() => null);
+  if (!data) {
+    document.getElementById('loading-screen').innerHTML =
+      '<p style="color:#888;font-size:14px;padding:40px 20px;text-align:center">Could not load report data.</p>';
+    return;
+  }
+  render(data);
+}
+
+function loadMap(lat, lng, grid) {
+  if (!mapsKey) {
+    document.getElementById('map-loading-msg').textContent = 'Map unavailable';
+    return;
+  }
+  window._scanGrid = grid; window._scanLat = lat; window._scanLng = lng;
+  window._initScanCardMap = function() { renderMap(window._scanLat, window._scanLng, window._scanGrid); };
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&callback=_initScanCardMap&v=weekly`;
+  s.async = true;
+  s.onerror = () => { document.getElementById('map-loading-msg').textContent = 'Map unavailable'; };
+  document.head.appendChild(s);
+}
+
+function renderMap(lat, lng, grid) {
+  const el = document.getElementById('gmapEl');
+  const loadMsg = document.getElementById('map-loading-msg');
+  if (!el || !window.google) return;
+  if (loadMsg) loadMsg.style.display = 'none';
+  document.getElementById('map-legend').style.display = 'flex';
+
+  const darkStyle = [
+    {elementType:'geometry',stylers:[{color:'#1a1a2e'}]},
+    {elementType:'labels.text.fill',stylers:[{color:'#746855'}]},
+    {elementType:'labels.text.stroke',stylers:[{color:'#242f3e'}]},
+    {featureType:'road',elementType:'geometry',stylers:[{color:'#2c2c3e'}]},
+    {featureType:'road',elementType:'geometry.stroke',stylers:[{color:'#212a37'}]},
+    {featureType:'road',elementType:'labels.text.fill',stylers:[{color:'#9ca5b3'}]},
+    {featureType:'road.highway',elementType:'geometry',stylers:[{color:'#746855'}]},
+    {featureType:'water',elementType:'geometry',stylers:[{color:'#0e1626'}]},
+    {featureType:'water',elementType:'labels.text.fill',stylers:[{color:'#515c6d'}]},
+    {featureType:'poi',stylers:[{visibility:'off'}]},
+    {featureType:'transit',stylers:[{visibility:'off'}]}
+  ];
+
+  const map = new google.maps.Map(el, {
+    center:{lat,lng}, zoom:12, disableDefaultUI:true, zoomControl:true,
+    zoomControlOptions:{position:google.maps.ControlPosition.RIGHT_BOTTOM},
+    gestureHandling:'cooperative', styles:darkStyle
+  });
+
+  grid.forEach(p => {
+    const rank = p.rank;
+    let fill = '#ef4444';
+    if (rank && rank <= 3) fill = '#22c55e';
+    else if (rank && rank <= 10) fill = '#f59e0b';
+
+    const circle = new google.maps.Circle({
+      strokeColor:'rgba(255,255,255,0.3)', strokeOpacity:.8, strokeWeight:1.5,
+      fillColor:fill, fillOpacity:.75, map, center:{lat:p.lat,lng:p.lng}, radius:600
+    });
+
+    const tops = (p.topBusinesses||[]).slice(0,3).map((b,i)=>`#${i+1} ${b.name}`).join('<br>');
+    const info = new google.maps.InfoWindow({
+      content:`<div style="background:#1E1E1E;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;min-width:140px">
+        <div style="font-weight:700;color:${fill};margin-bottom:4px">${rank?`Rank #${rank}`:'Not visible'}</div>
+        ${tops||'No data'}
+      </div>`
+    });
+    circle.addListener('click', ()=>{ info.setPosition({lat:p.lat,lng:p.lng}); info.open(map); });
+  });
+
+  new google.maps.Circle({
+    strokeColor:'#fff', strokeOpacity:1, strokeWeight:3,
+    fillColor:'#f59e0b', fillOpacity:1, map, center:{lat,lng}, radius:280, zIndex:10
+  });
+}
+
+initWithCfg();
+</script>
+</body>
+</html>

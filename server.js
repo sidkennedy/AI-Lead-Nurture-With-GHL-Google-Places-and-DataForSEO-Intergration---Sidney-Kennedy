@@ -304,11 +304,18 @@ app.get('/scan/:sessionId', (req, res) => {
 app.get('/api/scan/data/:sessionId', (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: 'Not found' });
+  const rd = session.researchData || {};
+  const topComp = (rd.competitors || [])[0] || null;
   res.json({
     practiceName: session.practiceName,
     city: session.city,
-    lat: session.researchData?.lat,
-    lng: session.researchData?.lng,
+    lat: rd.lat,
+    lng: rd.lng,
+    rating: rd.rating || 0,
+    reviews: rd.reviews || 0,
+    populationOver65: rd.populationOver65 || 45000,
+    competitorSummary: rd.competitorSummary || '',
+    topCompetitorResearch: topComp ? { name: topComp.name, rating: topComp.rating, reviews: topComp.reviews } : null,
     scanResults: session.scanResults,
     scanStatus: session.scanStatus
   });
