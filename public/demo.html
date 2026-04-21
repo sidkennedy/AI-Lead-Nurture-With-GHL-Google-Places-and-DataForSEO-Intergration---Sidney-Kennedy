@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Visibility Map Preview</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:#1C1C1E;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;color:#fff}
+body{display:flex;flex-direction:column;align-items:center;padding:20px 0 40px}
+.demo-label{font-size:11px;color:#555;letter-spacing:1px;text-transform:uppercase;margin-bottom:16px;margin-top:4px}
+.chat-frame{width:390px;max-width:100%;display:flex;flex-direction:column;gap:8px;padding:0 12px}
+
+/* Message bubbles */
+.msg{max-width:82%;padding:10px 14px;border-radius:18px;font-size:15px;line-height:1.5;animation:msgIn 0.35s ease}
+.msg.ai{align-self:flex-start;background:#2C2C2E;border-bottom-left-radius:4px;color:#fff}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Typing dots */
+.typing-dots{align-self:flex-start;background:#2C2C2E;border-radius:18px;border-bottom-left-radius:4px;padding:12px 16px;display:flex;gap:5px;animation:msgIn 0.3s ease}
+.typing-dots span{width:7px;height:7px;border-radius:50%;background:#555;animation:bounce 1.2s infinite}
+.typing-dots span:nth-child(2){animation-delay:.2s}
+.typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
+/* Scan map card */
+.scan-map-card{width:92%;align-self:flex-start;background:#1E1E1E;border:1px solid #f59e0b;border-radius:18px;overflow:hidden;animation:msgIn 0.4s ease;margin-top:2px}
+.scan-map-header{padding:12px 14px 8px}
+.scan-map-title{font-size:14px;font-weight:700;color:#fff}
+.scan-map-sub{font-size:11px;color:#666;margin-top:2px}
+.scan-map-area{width:100%;height:270px;background:#1a1a1a;position:relative}
+.scan-map-area #gmapEl{width:100%;height:100%}
+.scan-map-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#555}
+.scan-map-legend{display:flex;gap:12px;padding:8px 14px;border-top:1px solid #2a2a2a}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#888}
+.legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.scan-map-stats{padding:6px 14px 10px;display:flex;flex-direction:column;gap:5px;border-top:1px solid #2a2a2a}
+.scan-stat-row{display:flex;align-items:center;gap:8px;font-size:13px;color:#ccc}
+.stat-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.scan-map-cta{padding:8px 14px 14px}
+.scan-map-cta a{display:block;background:#f59e0b;color:#000;text-align:center;font-weight:700;font-size:14px;padding:12px;border-radius:10px;text-decoration:none}
+
+.status-txt{font-size:12px;color:#555;text-align:center;margin-top:12px}
+</style>
+</head>
+<body>
+
+<div class="demo-label">Live Preview — Inline Scan Map</div>
+
+<div class="chat-frame" id="chat"></div>
+<div class="status-txt" id="status">Starting scan…</div>
+
+<script>
+let mapsKey = '';
+let sessionId = '';
+
+async function init() {
+  const cfg = await fetch('/api/config').then(r => r.json());
+  mapsKey = cfg.mapsKey || '';
+
+  const s = await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+  sessionId = s.sessionId;
+
+  await fetch('/api/session/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, practiceName: 'Doc Side Audiology', city: 'Sarasota FL', currentStep: 'onboarding-3' })
+  });
+
+  setStatus('Running scan… (~8 sec)');
+  pollScan();
+}
+
+async function pollScan() {
+  const data = await fetch('/api/scan/status/' + sessionId).then(r => r.json()).catch(() => ({}));
+  if (data.status === 'complete') {
+    setStatus('');
+    showDemo(data.results);
+  } else {
+    setTimeout(pollScan, 1500);
+  }
+}
+
+function setStatus(txt) {
+  document.getElementById('status').textContent = txt;
+}
+
+async function showDemo(scanResults) {
+  const chat = document.getElementById('chat');
+
+  // Typing indicator
+  const dots = document.createElement('div');
+  dots.className = 'typing-dots';
+  dots.innerHTML = '<span></span><span></span><span></span>';
+  chat.appendChild(dots);
+
+  await delay(1400);
+  dots.remove();
+
+  // AI message
+  const msg = document.createElement('div');
+  msg.className = 'msg ai';
+  msg.textContent = 'Out of 25 points across your local map, you\'re visible in 7 of them and invisible in 18.';
+  chat.appendChild(msg);
+
+  await delay(700);
+
+  // Map card
+  const scanData = await fetch('/api/scan/data/' + sessionId).then(r => r.json());
+  const sr = scanData.scanResults || {};
+  const lat = scanData.lat || 0;
+  const lng = scanData.lng || 0;
+  const comp = sr.topCompetitor;
+
+  const card = document.createElement('div');
+  card.className = 'scan-map-card';
+  card.innerHTML = `
+    <div class="scan-map-header">
+      <div class="scan-map-title">📍 Doc Side Audiology — Visibility Map</div>
+      <div class="scan-map-sub">audiologist · 5-mile radius · Sarasota FL</div>
+    </div>
+    <div class="scan-map-area">
+      <div id="gmapEl" style="width:100%;height:100%"></div>
+      <div class="scan-map-loading" id="map-loading-msg">Loading map…</div>
+    </div>
+    <div class="scan-map-legend">
+      <div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>Top 3</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>4–10</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Invisible</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;border:2px solid #fff"></span>Your location</div>
+    </div>
+    <div class="scan-map-stats">
+      <div class="scan-stat-row"><span class="stat-dot" style="background:#22c55e"></span>Visible top-3: <strong>${sr.visibleTop3 || 0}/${sr.totalPoints || 25} spots</strong></div>
+      <div class="scan-stat-row"><span class="stat-dot" style="background:#ef4444"></span>Invisible: <strong>${sr.invisible || 0}/${sr.totalPoints || 25} (${sr.percentInvisible || 0}%)</strong></div>
+      ${comp ? `<div class="scan-stat-row"><span class="stat-dot" style="background:#888"></span>Top competitor: <strong>${comp.name}</strong> — visible at ${comp.visibleIn} of your blind spots</div>` : ''}
+      ${sr.averageRankWhereVisible ? `<div class="scan-stat-row"><span class="stat-dot" style="background:#888"></span>Avg rank where visible: <strong>#${sr.averageRankWhereVisible}</strong></div>` : ''}
+    </div>
+    <div class="scan-map-cta">
+      <a href="#" target="_blank">Book a 10-min call to fix this →</a>
+    </div>
+  `;
+  chat.appendChild(card);
+
+  if (lat && lng && sr.gridResults) {
+    loadMap(lat, lng, sr.gridResults);
+  } else {
+    document.getElementById('map-loading-msg').textContent = 'Map data unavailable';
+  }
+}
+
+function loadMap(lat, lng, grid) {
+  if (!mapsKey) { document.getElementById('map-loading-msg').textContent = 'Map unavailable'; return; }
+  window._grid = grid; window._lat = lat; window._lng = lng;
+  window._initMap = function() { renderMap(window._lat, window._lng, window._grid); };
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&callback=_initMap&v=weekly`;
+  s.async = true;
+  document.head.appendChild(s);
+}
+
+function renderMap(lat, lng, grid) {
+  const el = document.getElementById('gmapEl');
+  const loadMsg = document.getElementById('map-loading-msg');
+  if (!el || !window.google) return;
+  if (loadMsg) loadMsg.style.display = 'none';
+
+  const darkStyle = [
+    {elementType:'geometry',stylers:[{color:'#1a1a2e'}]},
+    {elementType:'labels.text.fill',stylers:[{color:'#746855'}]},
+    {elementType:'labels.text.stroke',stylers:[{color:'#242f3e'}]},
+    {featureType:'road',elementType:'geometry',stylers:[{color:'#2c2c3e'}]},
+    {featureType:'road',elementType:'labels.text.fill',stylers:[{color:'#9ca5b3'}]},
+    {featureType:'road.highway',elementType:'geometry',stylers:[{color:'#746855'}]},
+    {featureType:'water',elementType:'geometry',stylers:[{color:'#0e1626'}]},
+    {featureType:'water',elementType:'labels.text.fill',stylers:[{color:'#515c6d'}]},
+    {featureType:'poi',stylers:[{visibility:'off'}]},
+    {featureType:'transit',stylers:[{visibility:'off'}]}
+  ];
+
+  const map = new google.maps.Map(el, {
+    center:{lat,lng}, zoom:12, disableDefaultUI:true, zoomControl:true,
+    zoomControlOptions:{position:google.maps.ControlPosition.RIGHT_BOTTOM},
+    gestureHandling:'cooperative', styles:darkStyle
+  });
+
+  grid.forEach(p => {
+    const rank = p.rank;
+    let fill = '#ef4444';
+    if (rank && rank <= 3) fill = '#22c55e';
+    else if (rank && rank <= 10) fill = '#f59e0b';
+    const circle = new google.maps.Circle({
+      strokeColor:'rgba(255,255,255,0.4)',strokeOpacity:0.8,strokeWeight:1.5,
+      fillColor:fill,fillOpacity:0.75,map,center:{lat:p.lat,lng:p.lng},radius:600
+    });
+    const infoLines = (p.topBusinesses||[]).slice(0,3).map((b,i)=>`#${i+1} ${b.name}`).join('<br>');
+    const info = new google.maps.InfoWindow({
+      content:`<div style="background:#1E1E1E;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;min-width:140px"><div style="font-weight:700;color:${fill};margin-bottom:4px">${rank?`Rank #${rank}`:'Not visible'}</div>${infoLines||'No data'}</div>`
+    });
+    circle.addListener('click',()=>{info.setPosition({lat:p.lat,lng:p.lng});info.open(map);});
+  });
+
+  new google.maps.Circle({
+    strokeColor:'#fff',strokeOpacity:1,strokeWeight:3,
+    fillColor:'#f59e0b',fillOpacity:1,map,center:{lat,lng},radius:280,zIndex:10
+  });
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+init();
+</script>
+</body>
+</html>
