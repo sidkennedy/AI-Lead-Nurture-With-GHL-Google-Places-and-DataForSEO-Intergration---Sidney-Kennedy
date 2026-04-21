@@ -43,3 +43,7 @@ externalPort = 80
 DATAFORSEO_LOGIN = "contact@poweredupagency.com"
 DATAFORSEO_PASSWORD = "8e5eb2b0af21b149"
 GOOGLE_PLACES_KEY = "AIzaSyD_HUQJUmZs3YoLxF6MhNWiXAmDaNc45gQ"
+
+[deployment]
+deploymentTarget = "vm"
+run = ["node", "server.js"]

@@ -7659,19 +7659,542 @@
       {
         "role": "assistant",
         "content": "Hey there! Welcome to your practice analysis demo.\n\nTo get started, what's the name of your practice as it appears on Google Maps?"
+      },
+      {
+        "role": "user",
+        "content": "ZN audiology"
+      },
+      {
+        "role": "assistant",
+        "content": "Great! And what city is your practice located in?"
+      },
+      {
+        "role": "user",
+        "content": "NY"
+      },
+      {
+        "role": "assistant",
+        "content": "Perfect — give me one sec while I pull up some data on that.\n\nWhile that's loading... what's your first name?"
       }
     ],
     "status": "active",
-    "scanStatus": "idle",
-    "researchStatus": "idle",
-    "researchData": null,
-    "scanResults": null,
-    "currentStep": "onboarding-1",
+    "scanStatus": "complete",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "ZN Audiology",
+      "rating": 4.9,
+      "reviews": 166,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "112-15 72nd Rd # Ll4, Forest Hills, NY 11375, USA",
+      "lat": 40.7213398,
+      "lng": -73.8376262,
+      "placeId": "ChIJzQWv7ElewokRGylucTKXBhQ",
+      "competitors": [
+        {
+          "name": "Liberty Hearing Centers",
+          "reviews": 552,
+          "rating": 4.8,
+          "placeId": "ChIJhZiGeO9dwokRnEe-Hfgc_x0"
+        },
+        {
+          "name": "HearingLife of Bayside NY",
+          "reviews": 349,
+          "rating": 4.7,
+          "placeId": "ChIJle70j9BhwokRrG_FbsVdZ2g"
+        },
+        {
+          "name": "Universal Hearing Center",
+          "reviews": 319,
+          "rating": 4.9,
+          "placeId": "ChIJ08TTrCBewokR8ccbLA64KdE"
+        },
+        {
+          "name": "Hearing and Brain Centers of America - Long Island Tinnitus Relief",
+          "reviews": 256,
+          "rating": 4.9,
+          "placeId": "ChIJ8ye4ZYhkwokRbPI8k7Ttqok"
+        },
+        {
+          "name": "Long Island Audiology",
+          "reviews": 194,
+          "rating": 5,
+          "placeId": "ChIJx8kDJ66JwokRmLAsC-yzWdw"
+        }
+      ],
+      "competitorSummary": "ZN audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": {
+      "gridResults": [
+        {
+          "lat": 40.648839800000005,
+          "lng": -73.933286342166,
+          "rank": 3,
+          "topBusinesses": [
+            {
+              "name": "Dr. Levi A. Reiter",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Liberty Hearing Centers",
+              "rank": 2,
+              "rating": 4.8
+            },
+            {
+              "name": "Pronesti Audiology at Be Well Clinic",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 40.648839800000005,
+          "lng": -73.885456271083,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 40.648839800000005,
+          "lng": -73.8376262,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "HearUSA",
+              "rank": 1,
+              "rating": 4.7
+            },
+            {
+              "name": "Harmony Hearing Center",
+              "rank": 2,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 40.648839800000005,
+          "lng": -73.789796128917,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 40.648839800000005,
+          "lng": -73.741966057834,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Costco Hearing Center",
+              "rank": 1,
+              "rating": 4.3
+            }
+          ]
+        },
+        {
+          "lat": 40.6850898,
+          "lng": -73.933286342166,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Lisa R. Zollman, MA CCC-A",
+              "rank": 1,
+              "rating": 3.7
+            },
+            {
+              "name": "ClearSound Hearing Centers (Long Island Queens Hearing Associates)",
+              "rank": 2,
+              "rating": 3.4
+            },
+            {
+              "name": "Dr. James Pronesti",
+              "rank": 3,
+              "rating": 3.7
+            }
+          ]
+        },
+        {
+          "lat": 40.6850898,
+          "lng": -73.885456271083,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Lisa R. Zollman, MA CCC-A",
+              "rank": 1,
+              "rating": 3.7
+            }
+          ]
+        },
+        {
+          "lat": 40.6850898,
+          "lng": -73.8376262,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Sounds Good Audiology Services",
+              "rank": 1,
+              "rating": 4.9
+            },
+            {
+              "name": "Universal Hearing Center of Woodhaven",
+              "rank": 2,
+              "rating": 4.8
+            },
+            {
+              "name": "Dina M. Parolisi, MS",
+              "rank": 3,
+              "rating": 4.7
+            }
+          ]
+        },
+        {
+          "lat": 40.6850898,
+          "lng": -73.789796128917,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "ClearSound Hearing Centers (Long Island Queens Hearing Associates)",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "SICKAUDIONY",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "Dr. Alexandra Lewery",
+              "rank": 3,
+              "rating": null
+            }
+          ]
+        },
+        {
+          "lat": 40.6850898,
+          "lng": -73.741966057834,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "ClearSound Hearing Centers (Long Island Queens Hearing Associates)",
+              "rank": 1,
+              "rating": 3
+            }
+          ]
+        },
+        {
+          "lat": 40.7213398,
+          "lng": -73.933286342166,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Lisa R. Zollman, MA CCC-A",
+              "rank": 1,
+              "rating": 3.7
+            },
+            {
+              "name": "Clare Villanueva, Manhattan Avenue Hearing Aids, Inc",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "Manhattan Avenue Hearing Aids",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 40.7213398,
+          "lng": -73.885456271083,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Audiological Diagnostics, PC",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Audibel Hearing Center",
+              "rank": 2,
+              "rating": 4.8
+            },
+            {
+              "name": "A&E Hearing Aid Center",
+              "rank": 3,
+              "rating": 4.8
+            }
+          ]
+        },
+        {
+          "lat": 40.7213398,
+          "lng": -73.8376262,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Forest Hills Audiology",
+              "rank": 1,
+              "rating": 4.9
+            },
+            {
+              "name": "ZN Audiology",
+              "rank": 2,
+              "rating": 4.9
+            },
+            {
+              "name": "Universal Hearing Center",
+              "rank": 3,
+              "rating": 4.9
+            }
+          ]
+        },
+        {
+          "lat": 40.7213398,
+          "lng": -73.789796128917,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "ClearSound Hearing Centers (Long Island Queens Hearing Associates)",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "St. John's University Speech & Hearing Center",
+              "rank": 2,
+              "rating": 4.3
+            },
+            {
+              "name": "ENT & Allergy Associates - Fresh Meadows",
+              "rank": 3,
+              "rating": 3.1
+            }
+          ]
+        },
+        {
+          "lat": 40.7213398,
+          "lng": -73.741966057834,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Warren Hsu",
+              "rank": 1,
+              "rating": 4.3
+            }
+          ]
+        },
+        {
+          "lat": 40.757589800000005,
+          "lng": -73.933286342166,
+          "rank": 3,
+          "topBusinesses": [
+            {
+              "name": "NYC Hearing Associates PLLC",
+              "rank": 1,
+              "rating": 4.9
+            },
+            {
+              "name": "Haley Bruce, Au.D., CCC-A",
+              "rank": 2,
+              "rating": 4.9
+            },
+            {
+              "name": "Queens Audiology Pllc",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 40.757589800000005,
+          "lng": -73.885456271083,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Lexington Hearing & Speech Center",
+              "rank": 1,
+              "rating": 4.8
+            },
+            {
+              "name": "Hearing Technologies Center",
+              "rank": 2,
+              "rating": 4.7
+            },
+            {
+              "name": "Mrs. Joanne Tzortzatos",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 40.757589800000005,
+          "lng": -73.8376262,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "NY Audiology",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Acousticon of Flushing",
+              "rank": 2,
+              "rating": 4.8
+            },
+            {
+              "name": "Landa Hearing Center－Audiologist／Hearing aids 耳通听力中心/纽约 法拉盛 助听器 听力测试",
+              "rank": 3,
+              "rating": 3.6
+            }
+          ]
+        },
+        {
+          "lat": 40.757589800000005,
+          "lng": -73.789796128917,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Queens Hearing Center 퀸즈 보청기 & 청력 센터",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "HearingLife of Bayside NY",
+              "rank": 2,
+              "rating": 4.7
+            },
+            {
+              "name": "굿뉴스보청기언어청각센터 뉴욕지점 Good News Hearing and Communication Center-NY Branch",
+              "rank": 3,
+              "rating": 4.7
+            }
+          ]
+        },
+        {
+          "lat": 40.757589800000005,
+          "lng": -73.741966057834,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Audibel Hearing Center",
+              "rank": 1,
+              "rating": 4.9
+            }
+          ]
+        },
+        {
+          "lat": 40.7938398,
+          "lng": -73.933286342166,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Manhattan Audiology",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "NYC Hearing Associates PLLC",
+              "rank": 2,
+              "rating": 4.9
+            },
+            {
+              "name": "Nancy Gilston, Au.D.",
+              "rank": 3,
+              "rating": 4.9
+            }
+          ]
+        },
+        {
+          "lat": 40.7938398,
+          "lng": -73.885456271083,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Gaida Hinnawi, Voice Pathologist & Vocal Coach",
+              "rank": 1,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 40.7938398,
+          "lng": -73.8376262,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Queens Audiology PLLC",
+              "rank": 1,
+              "rating": 3.7
+            }
+          ]
+        },
+        {
+          "lat": 40.7938398,
+          "lng": -73.789796128917,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Queens Audiology PLLC",
+              "rank": 1,
+              "rating": 3.7
+            },
+            {
+              "name": "Stephanie Sanson, AuD, CCC-A",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "Alexandra Burgess, AuD, CCC-A",
+              "rank": 3,
+              "rating": null
+            }
+          ]
+        },
+        {
+          "lat": 40.7938398,
+          "lng": -73.741966057834,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Audibel Hearing Center",
+              "rank": 1,
+              "rating": 4.9
+            },
+            {
+              "name": "Integrated ENT, Allergy & Immunology - Great Neck",
+              "rank": 2,
+              "rating": 4.3
+            },
+            {
+              "name": "North Shore Center",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        }
+      ],
+      "visibleTop3": 8,
+      "visibleTop10": 8,
+      "invisible": 17,
+      "totalPoints": 25,
+      "percentInvisible": 68,
+      "topCompetitor": {
+        "name": "ClearSound Hearing Centers (Long Island Queens Hearing Associates)",
+        "visibleIn": 4
+      },
+      "averageRankWhereVisible": 2,
+      "scanUrl": "http://localhost:3000/scan/56e11eb1-2028-4cd6-8881-0ffbe62d8290"
+    },
+    "currentStep": "onboarding-3",
     "name": null,
     "phone": null,
-    "practiceName": null,
-    "city": null,
+    "practiceName": "ZN audiology",
+    "city": "NY",
     "contactId": null,
-    "createdAt": 1776810913653
+    "createdAt": 1776810913653,
+    "confirmedPlaceId": "ChIJzQWv7ElewokRGylucTKXBhQ"
   }
 }
