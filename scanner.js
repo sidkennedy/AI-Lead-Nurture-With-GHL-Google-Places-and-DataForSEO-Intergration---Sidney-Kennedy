@@ -23,26 +23,17 @@ function fuzzyMatch(haystack, needle) {
   return words.some(w => h.includes(w));
 }
 
-async function dfsRequest(method, path, body) {
-  const login = process.env.DATAFORSEO_LOGIN;
-  const password = process.env.DATAFORSEO_PASSWORD;
-  if (!login || !password) return null;
-
-  const auth = Buffer.from(`${login}:${password}`).toString('base64');
+// Search one grid point via Google Places Nearby Search
+async function searchPoint(lat, lng, keyword, radiusMeters, apiKey) {
+  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json` +
+    `?location=${lat},${lng}&radius=${radiusMeters}&keyword=${encodeURIComponent(keyword)}&key=${apiKey}`;
   try {
-    const res = await fetch(`https://api.dataforseo.com${path}`, {
-      method,
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/json'
-      },
-      body: body ? JSON.stringify(body) : undefined
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    console.error('[Scanner] DFS request error:', err.message);
-    return null;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.results || [];
+  } catch {
+    return [];
   }
 }
 
@@ -52,16 +43,16 @@ async function startScan(sessionObj, practiceName, city, keyword) {
 
   sessions.update(sessionId, { scanStatus: 'running' });
 
-  const login = process.env.DATAFORSEO_LOGIN;
-  if (!login) {
-    console.log('[Scanner] No DataForSEO credentials — using mock scan data');
+  const apiKey = process.env.GOOGLE_PLACES_KEY;
+  if (!apiKey) {
+    console.log('[Scanner] No Google Places key — using mock scan data');
     await new Promise(r => setTimeout(r, 3000));
     const mockResults = generateMockResults(practiceName, sessionId);
     sessions.update(sessionId, { scanResults: mockResults, scanStatus: 'complete' });
     return;
   }
 
-  // Get lat/lng from session research data (wait up to 30s)
+  // Wait up to 30s for lat/lng from research
   let lat, lng;
   for (let i = 0; i < 30; i++) {
     const s = sessions.get(sessionId);
@@ -74,69 +65,40 @@ async function startScan(sessionObj, practiceName, city, keyword) {
   }
 
   if (!lat) {
-    console.log('[Scanner] No lat/lng available, aborting scan');
+    console.log('[Scanner] No lat/lng available after 30s, aborting scan');
     sessions.update(sessionId, { scanStatus: 'failed' });
     return;
   }
 
+  console.log(`[Scanner] Got lat/lng ${lat},${lng} — firing ${config.gridSize}x${config.gridSize} grid`);
+
   const grid = generateGrid(lat, lng, config.scanRadius, config.gridSize);
   const scanKeyword = keyword || config.scanKeyword;
 
+  // Search radius per grid point: ~2km covers local pack results well
+  const pointRadiusMeters = 2000;
+
   try {
-    // Post all 25 tasks
-    const tasks = grid.map(point => ({
-      keyword: scanKeyword,
-      location_coordinate: `${point.lat.toFixed(6)},${point.lng.toFixed(6)},15z`,
-      language_code: 'en',
-      se_domain: 'google.com'
-    }));
+    // Fire all 25 grid-point searches in parallel — completes in ~10-20s
+    const start = Date.now();
+    const searchResults = await Promise.all(
+      grid.map(point => searchPoint(point.lat, point.lng, scanKeyword, pointRadiusMeters, apiKey))
+    );
+    console.log(`[Scanner] All ${grid.length} points returned in ${Date.now() - start}ms`);
 
-    const postRes = await dfsRequest('POST', '/v3/serp/google/maps/task_post', tasks);
-    if (!postRes?.tasks) {
-      sessions.update(sessionId, { scanStatus: 'failed' });
-      return;
-    }
-
-    const taskIds = postRes.tasks.map(t => t.id).filter(Boolean);
-    console.log(`[Scanner] Posted ${taskIds.length} tasks for session ${sessionId}`);
-
-    // Poll for completion
-    const startTime = Date.now();
-    const completedResults = new Map();
-
-    while (completedResults.size < taskIds.length && Date.now() - startTime < 180000) {
-      await new Promise(r => setTimeout(r, 10000));
-
-      const readyRes = await dfsRequest('GET', '/v3/serp/google/maps/tasks_ready');
-      if (!readyRes?.tasks) continue;
-
-      const readyIds = (readyRes.tasks[0]?.result || []).map(t => t.id);
-
-      for (const id of readyIds) {
-        if (!taskIds.includes(id) || completedResults.has(id)) continue;
-        const result = await dfsRequest('GET', `/v3/serp/google/maps/task_get/regular/${id}`);
-        if (result?.tasks?.[0]?.result) {
-          completedResults.set(id, result.tasks[0].result[0]);
-        }
+    const gridResults = grid.map((point, idx) => {
+      const places = searchResults[idx];
+      if (!places || places.length === 0) {
+        return { lat: point.lat, lng: point.lng, rank: null, topBusinesses: [] };
       }
 
-      console.log(`[Scanner] ${completedResults.size}/${taskIds.length} complete`);
-    }
+      const prospectIdx = places.findIndex(p => fuzzyMatch(p.name || '', practiceName));
+      const rank = prospectIdx >= 0 ? prospectIdx + 1 : null;
 
-    // Analyze results
-    const gridResults = grid.map((point, idx) => {
-      const taskId = taskIds[idx];
-      const result = completedResults.get(taskId);
-      if (!result?.items) return { lat: point.lat, lng: point.lng, rank: null, topBusinesses: [] };
-
-      const items = result.items;
-      const prospectItem = items.find(item => fuzzyMatch(item.title || '', practiceName));
-      const rank = prospectItem ? (items.indexOf(prospectItem) + 1) : null;
-
-      const topBusinesses = items.slice(0, 3).map(item => ({
-        name: item.title || 'Unknown',
-        rank: items.indexOf(item) + 1,
-        rating: item.rating?.value || null
+      const topBusinesses = places.slice(0, 3).map((p, i) => ({
+        name: p.name || 'Unknown',
+        rank: i + 1,
+        rating: p.rating || null
       }));
 
       return { lat: point.lat, lng: point.lng, rank, topBusinesses };

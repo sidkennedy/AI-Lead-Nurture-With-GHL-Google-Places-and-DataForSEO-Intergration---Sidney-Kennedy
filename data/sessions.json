@@ -519,5 +519,1148 @@
     "city": "Sarasota FL",
     "contactId": null,
     "createdAt": 1776801385724
+  },
+  "ba6faf0a-3c20-4bfe-aa78-02e7c2f6ad72": {
+    "sessionId": "ba6faf0a-3c20-4bfe-aa78-02e7c2f6ad72",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "failed",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "Doc Side Audiology",
+      "rating": 4.9,
+      "reviews": 116,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "2085 Siesta Dr Ste 3, Sarasota, FL 34239, USA",
+      "lat": 27.3032096,
+      "lng": -82.5281986,
+      "placeId": "ChIJteu7tVJAw4gRo1BDB5Zsnfo",
+      "competitors": [
+        {
+          "name": "Gulf Gate Hearing Aid Center",
+          "reviews": 340,
+          "rating": 5,
+          "placeId": "ChIJj-BhzIFBw4gRn2Wiy5uSFh4"
+        },
+        {
+          "name": "Audiology & Hearing Center of Sarasota",
+          "reviews": 319,
+          "rating": 5,
+          "placeId": "ChIJAfM3rltHw4gRclO825g7FUA"
+        },
+        {
+          "name": "HearCare Audiology Center",
+          "reviews": 297,
+          "rating": 5,
+          "placeId": "ChIJreveDERAw4gR0AEjCDOyOhM"
+        },
+        {
+          "name": "The Hearing Spa",
+          "reviews": 248,
+          "rating": 5,
+          "placeId": "ChIJwVSVrJhXaRQRekMuSD5hj3M"
+        },
+        {
+          "name": "HearUSA",
+          "reviews": 232,
+          "rating": 4.9,
+          "placeId": "ChIJrfEMioFBw4gR0gDHlk-qOoU"
+        }
+      ],
+      "competitorSummary": "Doc Side Audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": null,
+    "currentStep": "onboarding-3",
+    "name": null,
+    "phone": null,
+    "practiceName": "Doc Side Audiology",
+    "city": "Sarasota FL",
+    "contactId": null,
+    "createdAt": 1776801694577
+  },
+  "f176cb5c-8c14-4060-86c7-3bd013080296": {
+    "sessionId": "f176cb5c-8c14-4060-86c7-3bd013080296",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "failed",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "Doc Side Audiology",
+      "rating": 4.9,
+      "reviews": 116,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "2085 Siesta Dr Ste 3, Sarasota, FL 34239, USA",
+      "lat": 27.3032096,
+      "lng": -82.5281986,
+      "placeId": "ChIJteu7tVJAw4gRo1BDB5Zsnfo",
+      "competitors": [
+        {
+          "name": "Gulf Gate Hearing Aid Center",
+          "reviews": 340,
+          "rating": 5,
+          "placeId": "ChIJj-BhzIFBw4gRn2Wiy5uSFh4"
+        },
+        {
+          "name": "Audiology & Hearing Center of Sarasota",
+          "reviews": 319,
+          "rating": 5,
+          "placeId": "ChIJAfM3rltHw4gRclO825g7FUA"
+        },
+        {
+          "name": "HearCare Audiology Center",
+          "reviews": 297,
+          "rating": 5,
+          "placeId": "ChIJreveDERAw4gR0AEjCDOyOhM"
+        },
+        {
+          "name": "The Hearing Spa",
+          "reviews": 248,
+          "rating": 5,
+          "placeId": "ChIJwVSVrJhXaRQRekMuSD5hj3M"
+        },
+        {
+          "name": "HearUSA",
+          "reviews": 232,
+          "rating": 4.9,
+          "placeId": "ChIJrfEMioFBw4gR0gDHlk-qOoU"
+        }
+      ],
+      "competitorSummary": "Doc Side Audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": null,
+    "currentStep": "onboarding-3",
+    "name": null,
+    "phone": null,
+    "practiceName": "Doc Side Audiology",
+    "city": "Sarasota FL",
+    "contactId": null,
+    "createdAt": 1776801865322
+  },
+  "096b3e8b-2539-4710-8247-6e1281e1f15a": {
+    "sessionId": "096b3e8b-2539-4710-8247-6e1281e1f15a",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "complete",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "Doc Side Audiology",
+      "rating": 4.9,
+      "reviews": 116,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "2085 Siesta Dr Ste 3, Sarasota, FL 34239, USA",
+      "lat": 27.3032096,
+      "lng": -82.5281986,
+      "placeId": "ChIJteu7tVJAw4gRo1BDB5Zsnfo",
+      "competitors": [
+        {
+          "name": "Gulf Gate Hearing Aid Center",
+          "reviews": 340,
+          "rating": 5,
+          "placeId": "ChIJj-BhzIFBw4gRn2Wiy5uSFh4"
+        },
+        {
+          "name": "Audiology & Hearing Center of Sarasota",
+          "reviews": 319,
+          "rating": 5,
+          "placeId": "ChIJAfM3rltHw4gRclO825g7FUA"
+        },
+        {
+          "name": "HearCare Audiology Center",
+          "reviews": 297,
+          "rating": 5,
+          "placeId": "ChIJreveDERAw4gR0AEjCDOyOhM"
+        },
+        {
+          "name": "The Hearing Spa",
+          "reviews": 248,
+          "rating": 5,
+          "placeId": "ChIJwVSVrJhXaRQRekMuSD5hj3M"
+        },
+        {
+          "name": "HearUSA",
+          "reviews": 232,
+          "rating": 4.9,
+          "placeId": "ChIJrfEMioFBw4gR0gDHlk-qOoU"
+        }
+      ],
+      "competitorSummary": "Doc Side Audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": {
+      "gridResults": [
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        }
+      ],
+      "visibleTop3": 0,
+      "visibleTop10": 0,
+      "invisible": 25,
+      "totalPoints": 25,
+      "percentInvisible": 100,
+      "topCompetitor": null,
+      "averageRankWhereVisible": null,
+      "scanUrl": "http://localhost:3000/scan/096b3e8b-2539-4710-8247-6e1281e1f15a"
+    },
+    "currentStep": "onboarding-3",
+    "name": null,
+    "phone": null,
+    "practiceName": "Doc Side Audiology",
+    "city": "Sarasota FL",
+    "contactId": null,
+    "createdAt": 1776801920366
+  },
+  "dede92c5-8fac-4109-8756-603d9c1aca4c": {
+    "sessionId": "dede92c5-8fac-4109-8756-603d9c1aca4c",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Welcome to your practice analysis demo.\n\nTo get started, what's the name of your practice as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776802160329
+  },
+  "86fa9e9d-e605-49c9-86db-72add1d226e5": {
+    "sessionId": "86fa9e9d-e605-49c9-86db-72add1d226e5",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Welcome to Powered Up AI — I'm going to walk you through a quick analysis of your practice and show you exactly where revenue might be slipping through the cracks.\n\nTo get started, what's the name of your practice as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776802296927
+  },
+  "0460224a-3108-4554-a5dc-0e0b2100e863": {
+    "sessionId": "0460224a-3108-4554-a5dc-0e0b2100e863",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "complete",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "Doc Side Audiology",
+      "rating": 4.9,
+      "reviews": 116,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "2085 Siesta Dr Ste 3, Sarasota, FL 34239, USA",
+      "lat": 27.3032096,
+      "lng": -82.5281986,
+      "placeId": "ChIJteu7tVJAw4gRo1BDB5Zsnfo",
+      "competitors": [
+        {
+          "name": "Gulf Gate Hearing Aid Center",
+          "reviews": 340,
+          "rating": 5,
+          "placeId": "ChIJj-BhzIFBw4gRn2Wiy5uSFh4"
+        },
+        {
+          "name": "Audiology & Hearing Center of Sarasota",
+          "reviews": 319,
+          "rating": 5,
+          "placeId": "ChIJAfM3rltHw4gRclO825g7FUA"
+        },
+        {
+          "name": "HearCare Audiology Center",
+          "reviews": 297,
+          "rating": 5,
+          "placeId": "ChIJreveDERAw4gR0AEjCDOyOhM"
+        },
+        {
+          "name": "The Hearing Spa",
+          "reviews": 248,
+          "rating": 5,
+          "placeId": "ChIJwVSVrJhXaRQRekMuSD5hj3M"
+        },
+        {
+          "name": "HearUSA",
+          "reviews": 232,
+          "rating": 4.9,
+          "placeId": "ChIJrfEMioFBw4gR0gDHlk-qOoU"
+        }
+      ],
+      "competitorSummary": "Doc Side Audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": {
+      "gridResults": [
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        }
+      ],
+      "visibleTop3": 0,
+      "visibleTop10": 0,
+      "invisible": 25,
+      "totalPoints": 25,
+      "percentInvisible": 100,
+      "topCompetitor": null,
+      "averageRankWhereVisible": null,
+      "scanUrl": "http://localhost:3000/scan/0460224a-3108-4554-a5dc-0e0b2100e863"
+    },
+    "currentStep": "onboarding-3",
+    "name": null,
+    "phone": null,
+    "practiceName": "Doc Side Audiology",
+    "city": "Sarasota FL",
+    "contactId": null,
+    "createdAt": 1776802307012
+  },
+  "ffcce10b-6346-4a1c-a1e4-11dc2b5c1099": {
+    "sessionId": "ffcce10b-6346-4a1c-a1e4-11dc2b5c1099",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Welcome to Powered Up AI — I'm going to walk you through a quick analysis of your practice and show you exactly where revenue is slipping through the cracks.\n\nTo get started, what's the name of your practice as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776802510236
+  },
+  "69617f0c-d1da-45fd-9aa9-0933eec239b9": {
+    "sessionId": "69617f0c-d1da-45fd-9aa9-0933eec239b9",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "running",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "Doc Side Audiology",
+      "rating": 4.9,
+      "reviews": 116,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "2085 Siesta Dr Ste 3, Sarasota, FL 34239, USA",
+      "lat": 27.3032096,
+      "lng": -82.5281986,
+      "placeId": "ChIJteu7tVJAw4gRo1BDB5Zsnfo",
+      "competitors": [
+        {
+          "name": "Gulf Gate Hearing Aid Center",
+          "reviews": 340,
+          "rating": 5,
+          "placeId": "ChIJj-BhzIFBw4gRn2Wiy5uSFh4"
+        },
+        {
+          "name": "Audiology & Hearing Center of Sarasota",
+          "reviews": 319,
+          "rating": 5,
+          "placeId": "ChIJAfM3rltHw4gRclO825g7FUA"
+        },
+        {
+          "name": "HearCare Audiology Center",
+          "reviews": 297,
+          "rating": 5,
+          "placeId": "ChIJreveDERAw4gR0AEjCDOyOhM"
+        },
+        {
+          "name": "The Hearing Spa",
+          "reviews": 248,
+          "rating": 5,
+          "placeId": "ChIJwVSVrJhXaRQRekMuSD5hj3M"
+        },
+        {
+          "name": "HearUSA",
+          "reviews": 232,
+          "rating": 4.9,
+          "placeId": "ChIJrfEMioFBw4gR0gDHlk-qOoU"
+        }
+      ],
+      "competitorSummary": "Doc Side Audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": null,
+    "currentStep": "onboarding-3",
+    "name": null,
+    "phone": null,
+    "practiceName": "Doc Side Audiology",
+    "city": "Sarasota FL",
+    "contactId": null,
+    "createdAt": 1776802519594
+  },
+  "8df47875-bebc-40d0-aa8b-20f05f366d5e": {
+    "sessionId": "8df47875-bebc-40d0-aa8b-20f05f366d5e",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Let's get started.\n\nWhat's the name of your practice, exactly as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776803042707
+  },
+  "cc369059-3fb6-4357-966c-f275539e8352": {
+    "sessionId": "cc369059-3fb6-4357-966c-f275539e8352",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "complete",
+    "researchStatus": "complete",
+    "researchData": {
+      "name": "Doc Side Audiology",
+      "rating": 4.9,
+      "reviews": 116,
+      "photos": 10,
+      "websiteListed": true,
+      "hoursSet": true,
+      "address": "2085 Siesta Dr Ste 3, Sarasota, FL 34239, USA",
+      "lat": 27.3032096,
+      "lng": -82.5281986,
+      "placeId": "ChIJteu7tVJAw4gRo1BDB5Zsnfo",
+      "competitors": [
+        {
+          "name": "Gulf Gate Hearing Aid Center",
+          "reviews": 340,
+          "rating": 5,
+          "placeId": "ChIJj-BhzIFBw4gRn2Wiy5uSFh4"
+        },
+        {
+          "name": "Audiology & Hearing Center of Sarasota",
+          "reviews": 319,
+          "rating": 5,
+          "placeId": "ChIJAfM3rltHw4gRclO825g7FUA"
+        },
+        {
+          "name": "HearCare Audiology Center",
+          "reviews": 297,
+          "rating": 5,
+          "placeId": "ChIJreveDERAw4gR0AEjCDOyOhM"
+        },
+        {
+          "name": "The Hearing Spa",
+          "reviews": 248,
+          "rating": 5,
+          "placeId": "ChIJwVSVrJhXaRQRekMuSD5hj3M"
+        },
+        {
+          "name": "HearUSA",
+          "reviews": 232,
+          "rating": 4.9,
+          "placeId": "ChIJrfEMioFBw4gR0gDHlk-qOoU"
+        }
+      ],
+      "competitorSummary": "Doc Side Audiology is ranked 6th out of 6 practices by review count",
+      "prospectRank": 6,
+      "populationOver65": 45000,
+      "estimatedHearingLoss": 14850,
+      "messagingEnabled": false,
+      "profileScore": "okay"
+    },
+    "scanResults": {
+      "gridResults": [
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Costco hearing aid store",
+              "rank": 1,
+              "rating": 4.5
+            }
+          ]
+        },
+        {
+          "lat": 27.230709599999997,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.5281986,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "HearUSA",
+              "rank": 1,
+              "rating": 4.9
+            },
+            {
+              "name": "Gulf Gate Hearing Aid Center",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "Earsound Customs",
+              "rank": 3,
+              "rating": 2.3
+            }
+          ]
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.48740370332843,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Hear Sarasota - Massey Audiology",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Marlowe ENT - Center for Hearing",
+              "rank": 2,
+              "rating": 4.8
+            },
+            {
+              "name": "Hear Sarasota LLC",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 27.2669596,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Marlowe ENT - Center for Hearing",
+              "rank": 1,
+              "rating": 4.8
+            },
+            {
+              "name": "Andrew Marlowe MD ENT",
+              "rank": 2,
+              "rating": 4.8
+            },
+            {
+              "name": "Tiffany P. Potter, AUD",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.5281986,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "HearCare Audiology Center",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Hear Again America",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "Doc Side Audiology",
+              "rank": 3,
+              "rating": 4.9
+            }
+          ]
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3032096,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Physicians Hearing Clinic",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Shea Ent Clinic: Shea Roger M MD",
+              "rank": 2,
+              "rating": 4.3
+            },
+            {
+              "name": "Mc Carthy Patricia A",
+              "rank": 3,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.56899349667157,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.5281986,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Adept Audiology",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "The Hearing Spa",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "Virsono Hearing Center at The Ear Research Foundation, Sarasota",
+              "rank": 3,
+              "rating": 4.7
+            }
+          ]
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.339459599999998,
+          "lng": -82.44660880665685,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Audiology & Hearing Center of Sarasota",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Lucid Hearing Center",
+              "rank": 2,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.60978839334314,
+          "rank": null,
+          "topBusinesses": []
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.56899349667157,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Sarasota Audiology",
+              "rank": 1,
+              "rating": 5
+            }
+          ]
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.5281986,
+          "rank": 1,
+          "topBusinesses": [
+            {
+              "name": "Sarasota Audiology",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "AudioNova",
+              "rank": 2,
+              "rating": 4.9
+            },
+            {
+              "name": "Audibel Hearing Center",
+              "rank": 3,
+              "rating": 4.7
+            }
+          ]
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.48740370332843,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Optimum Hearing Care",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Audibel Hearing Center",
+              "rank": 2,
+              "rating": 4.7
+            },
+            {
+              "name": "Pediatric Ear, Nose & Throat Specialists",
+              "rank": 3,
+              "rating": 4.5
+            }
+          ]
+        },
+        {
+          "lat": 27.3757096,
+          "lng": -82.44660880665685,
+          "rank": null,
+          "topBusinesses": [
+            {
+              "name": "Manatee Hearing & Balance Center",
+              "rank": 1,
+              "rating": 5
+            },
+            {
+              "name": "Optimum Hearing Care",
+              "rank": 2,
+              "rating": 5
+            },
+            {
+              "name": "HearUSA",
+              "rank": 3,
+              "rating": 4.9
+            }
+          ]
+        }
+      ],
+      "visibleTop3": 6,
+      "visibleTop10": 6,
+      "invisible": 19,
+      "totalPoints": 25,
+      "percentInvisible": 76,
+      "topCompetitor": {
+        "name": "HearUSA",
+        "visibleIn": 2
+      },
+      "averageRankWhereVisible": 1,
+      "scanUrl": "http://localhost:3000/scan/cc369059-3fb6-4357-966c-f275539e8352"
+    },
+    "currentStep": "onboarding-3",
+    "name": null,
+    "phone": null,
+    "practiceName": "Doc Side Audiology",
+    "city": "Sarasota FL",
+    "contactId": null,
+    "createdAt": 1776803055570
   }
 }
