@@ -1,0 +1,20 @@
+{
+  "name": "powered-up-lead-magnet",
+  "version": "1.0.0",
+  "description": "Audiology sales demo tool with streaming AI chat",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "node-fetch": "^3.3.2",
+    "uuid": "^14.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

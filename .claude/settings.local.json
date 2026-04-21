@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(sudo chown *)",
+      "Bash(node --check server.js)",
+      "Bash(node --check research.js)",
+      "Bash(node --check scanner.js)",
+      "Bash(node --check ghl.js)",
+      "Bash(npm start *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); console.log\\('KEY:', process.env.ANTHROPIC_API_KEY ? 'found \\('+process.env.ANTHROPIC_API_KEY.slice\\(0,20\\)+'...\\)' : 'MISSING'\\)\")",
+      "Bash(node -e \"const d = require\\('dotenvx'\\); console.log\\(typeof d.config\\)\")",
+      "Bash(node -e \"const m = require\\('/Users/sidneykennedy/Documents/Powered Up Lead Magnet/node_modules/dotenv/package.json'\\); console.log\\(m.version, m.main\\)\")",
+      "Bash(node -e \"const d = require\\('/Users/sidneykennedy/Documents/Powered Up Lead Magnet/node_modules/dotenv'\\); d.config\\({path:'/Users/sidneykennedy/Documents/Powered Up Lead Magnet/.env'}\\); console.log\\('KEY:', process.env.ANTHROPIC_API_KEY ? 'found' : 'missing'\\)\")",
+      "Bash(node -e \"require\\('/Users/sidneykennedy/Documents/Powered Up Lead Magnet/node_modules/dotenv'\\).config\\({path:'/Users/sidneykennedy/Documents/Powered Up Lead Magnet/.env'}\\); console.log\\('KEY:', process.env.ANTHROPIC_API_KEY ? 'found \\('+process.env.ANTHROPIC_API_KEY.slice\\(0,20\\)+'...\\)' : 'MISSING'\\)\")",
+      "Bash(xxd \"/Users/sidneykennedy/Documents/Powered Up Lead Magnet/.env\")",
+      "Bash(pkill -f \"node server.js\")"
+    ]
+  }
+}

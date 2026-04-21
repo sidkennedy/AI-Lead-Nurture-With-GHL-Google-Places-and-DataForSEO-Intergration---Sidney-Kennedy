@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Powered Up AI — Practice Analysis</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+
+/* Headline overlay */
+#overlay{position:fixed;inset:0;background:#1a1a1a;z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;transition:opacity 0.6s ease,transform 0.6s ease}
+#overlay.fade-out{opacity:0;transform:translateY(-30px);pointer-events:none}
+#headline-text{font-size:28px;font-weight:700;color:#fff;text-align:center;line-height:1.35;max-width:340px;opacity:0;animation:fadeInUp 0.5s ease 0.2s forwards}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+/* App shell */
+#app{display:flex;flex-direction:column;height:100%;opacity:0;transition:opacity 0.4s ease}
+#app.visible{opacity:1}
+
+/* Top bar */
+#topbar{display:flex;align-items:center;gap:10px;padding:0 14px;height:50px;background:#1a1a1a;flex-shrink:0;border-bottom:1px solid #2a2a2a}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#ef4444);flex-shrink:0}
+.brand{font-size:15px;font-weight:600;color:#fff;flex:1}
+.online-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0}
+#countdown{font-size:11px;color:#555;white-space:nowrap}
+
+/* Progress area */
+#progress-wrap{flex-shrink:0;background:#1a1a1a}
+#progress-bar-container{height:3px;background:#333;position:relative;overflow:hidden}
+#progress-bar{height:100%;background:#f59e0b;width:15%;transition:width 0.6s ease,background 0.4s ease}
+#progress-bar.pulse{animation:barPulse 0.3s ease}
+#progress-bar.complete{background:#22c55e}
+@keyframes barPulse{0%{filter:brightness(1)}50%{filter:brightness(1.8)}100%{filter:brightness(1)}}
+#step-label{font-size:11px;color:#666;padding:4px 14px 4px;height:19px;overflow:hidden}
+
+/* Chat area */
+#chat-area{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;-webkit-overflow-scrolling:touch}
+.msg{max-width:80%;padding:10px 14px;border-radius:18px;font-size:15px;line-height:1.45;word-break:break-word;animation:msgIn 0.2s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-self:flex-end;background:#007AFF;color:#fff;border-bottom-right-radius:4px}
+.msg.ai{align-self:flex-start;background:#2C2C2E;color:#fff;border-bottom-left-radius:4px}
+.msg.ai.streaming{border-bottom-left-radius:4px}
+
+/* Typing indicator */
+#typing{align-self:flex-start;background:#2C2C2E;padding:10px 14px;border-radius:18px;border-bottom-left-radius:4px;display:none}
+.dots{display:flex;gap:5px;align-items:center}
+.dot-pulse{width:8px;height:8px;border-radius:50%;background:#888;animation:dotPulse 1.4s infinite ease-in-out}
+.dot-pulse:nth-child(2){animation-delay:0.2s}
+.dot-pulse:nth-child(3){animation-delay:0.4s}
+@keyframes dotPulse{0%,80%,100%{transform:scale(0.8);opacity:0.5}40%{transform:scale(1);opacity:1}}
+
+/* Scan card */
+.scan-card{background:#1E1E1E;border:1px solid #f59e0b;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;text-decoration:none;color:#fff;margin-top:2px}
+.scan-card svg{flex-shrink:0;color:#f59e0b}
+.scan-card-text{font-size:14px;font-weight:600}
+.scan-card-sub{font-size:12px;color:#888;margin-top:2px}
+
+/* Calendar widget */
+.calendar-bubble{background:#1E1E1E;border:1px solid #f59e0b;border-radius:14px;padding:12px;width:100%}
+.calendar-bubble p{font-size:13px;color:#aaa;margin-bottom:10px}
+.calendar-bubble iframe{width:100%;height:500px;border:none;border-radius:8px}
+
+/* Input bar */
+#input-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#1C1C1E;flex-shrink:0;border-top:1px solid #2a2a2a}
+#msg-input{flex:1;background:#2C2C2E;color:#fff;border:none;border-radius:20px;padding:10px 14px;font-size:15px;outline:none;font-family:inherit;resize:none;max-height:120px;line-height:1.4}
+#msg-input::placeholder{color:#555}
+#send-btn{width:38px;height:38px;border-radius:50%;background:#f59e0b;border:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:transform 0.1s}
+#send-btn:active{transform:scale(0.92)}
+#send-btn svg{width:16px;height:16px;fill:none;stroke:#000;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+
+/* Social proof ticker */
+#ticker{height:22px;background:#111;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#ticker-text{font-size:11px;color:#555;transition:opacity 0.4s ease}
+#ticker-text.fade{opacity:0}
+
+/* Confetti */
+.confetti-piece{position:fixed;width:6px;height:6px;background:#f59e0b;opacity:0;animation:confettiFall 1s ease forwards;pointer-events:none;z-index:99}
+@keyframes confettiFall{0%{opacity:1;transform:translateY(0) rotate(0deg)}100%{opacity:0;transform:translateY(80px) rotate(360deg)}}
+
+/* Checkmark */
+#step-check{display:inline-block;margin-left:4px;opacity:0;transition:opacity 0.3s}
+#step-check.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- Headline overlay -->
+<div id="overlay">
+  <div id="headline-text">We just pulled up your practice. There's something you should see.</div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <div id="topbar">
+    <div class="avatar"></div>
+    <span class="brand">Powered Up AI</span>
+    <span class="online-dot"></span>
+    <span id="countdown">Analysis expires in 24:00:00</span>
+  </div>
+
+  <div id="progress-wrap">
+    <div id="progress-bar-container"><div id="progress-bar"></div></div>
+    <div id="step-label">Setting up your analysis...<span id="step-check">✓</span></div>
+  </div>
+
+  <div id="chat-area">
+    <div id="typing"><div class="dots"><div class="dot-pulse"></div><div class="dot-pulse"></div><div class="dot-pulse"></div></div></div>
+  </div>
+
+  <div id="input-bar">
+    <textarea id="msg-input" rows="1" placeholder="Type a message..." autocomplete="off" autocorrect="off"></textarea>
+    <button id="send-btn" aria-label="Send">
+      <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+
+  <div id="ticker"><span id="ticker-text"></span></div>
+</div>
+
+<script>
+(function() {
+  // ── State ──────────────────────────────────────────────────────────────────
+  const SOCIAL_PROOF = [
+    "14 practices analyzed this week",
+    "Average practice has $127K in uncaptured revenue",
+    "Most practices are invisible 5+ miles from their office"
+  ];
+  const PROGRESS_STEPS = {
+    'onboarding-1': 15, 'onboarding-2': 25, 'onboarding-3': 30,
+    'onboarding-4': 45, 'onboarding-5': 50, 'onboarding-6': 55,
+    'step-1': 58, 'step-2': 65, 'step-3': 72,
+    'step-4': 78, 'step-5': 80, 'step-6': 88,
+    'step-7': 93, 'booking': 96, 'complete': 100
+  };
+  const STEP_LABELS = {
+    'onboarding-1': 'Setting up your analysis...',
+    'onboarding-2': 'Setting up your analysis...',
+    'onboarding-3': 'Pulling data on your practice...',
+    'onboarding-4': 'Pulling data on your practice...',
+    'onboarding-5': 'Pulling data on your practice...',
+    'onboarding-6': 'Pulling data on your practice...',
+    'step-1': 'Analyzing your revenue gaps...',
+    'step-2': 'Analyzing your revenue gaps...',
+    'step-3': 'Analyzing your revenue gaps...',
+    'step-4': 'Checking your referral network...',
+    'step-5': 'Checking your referral network...',
+    'step-6': 'Scanning your Google presence...',
+    'step-7': 'Building your report...',
+    'booking': 'Almost done — one last thing',
+    'complete': '✓ Complete'
+  };
+  const PLACEHOLDERS = {
+    practice: 'Type your practice name...',
+    city: 'Type your city...',
+    name: 'Type your first name...',
+    phone: 'Type your mobile number...',
+    yesno: 'Yes / No',
+    default: 'Type a message...'
+  };
+
+  let sessionId = null;
+  let sessionData = { name: null, phone: null, practiceName: null, city: null };
+  let currentStep = 'onboarding-1';
+  let sessionStart = Date.now();
+  let isStreaming = false;
+  let calendarWidgetUrl = '';
+  let tickerIdx = 0;
+  let researchPolling = null;
+  let scanPolling = null;
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  async function init() {
+    // Load config headline
+    const params = new URLSearchParams(location.search);
+    if (params.get('sessionId')) sessionId = params.get('sessionId');
+    if (params.get('name')) sessionData.name = params.get('name');
+    if (params.get('phone')) sessionData.phone = params.get('phone');
+
+    startTicker();
+    startCountdown();
+
+    // Create or restore session
+    if (!sessionId) {
+      const r = await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const d = await r.json();
+      sessionId = d.sessionId;
+      sessionStart = d.createdAt;
+    }
+
+    // After 3s fade overlay, start chat
+    setTimeout(() => {
+      document.getElementById('overlay').classList.add('fade-out');
+      document.getElementById('app').classList.add('visible');
+      setTimeout(() => {
+        document.getElementById('overlay').style.display = 'none';
+        sendFirstMessage();
+      }, 700);
+    }, 3000);
+  }
+
+  async function sendFirstMessage() {
+    // Trigger first AI message with empty user context
+    await sendToAI('__init__');
+  }
+
+  // ── Chat ───────────────────────────────────────────────────────────────────
+  async function sendMessage() {
+    const input = document.getElementById('msg-input');
+    const text = input.value.trim();
+    if (!text || isStreaming) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+    input.placeholder = PLACEHOLDERS.default;
+
+    appendMessage('user', text);
+    detectUserData(text);
+    await sendToAI(text);
+  }
+
+  async function sendToAI(userMsg) {
+    isStreaming = true;
+    showTyping();
+
+    const chatArea = document.getElementById('chat-area');
+    let aiBubble = null;
+    let fullText = '';
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, message: userMsg })
+      });
+
+      if (!resp.ok) throw new Error('Request failed');
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      hideTyping();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt.type === 'token') {
+              if (!aiBubble) {
+                aiBubble = createAIBubble();
+              }
+              fullText += evt.text;
+              renderAIText(aiBubble, fullText);
+              scrollChat();
+            } else if (evt.type === 'done') {
+              if (evt.currentStep) {
+                currentStep = evt.currentStep;
+                updateProgress(currentStep);
+              }
+              if (evt.scanReady) {
+                handleScanReady();
+              }
+              finalizeAIResponse(aiBubble, fullText);
+            } else if (evt.type === 'error') {
+              hideTyping();
+              appendMessage('ai', evt.message || 'Something went wrong.');
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      hideTyping();
+      appendMessage('ai', 'Connection issue — please try again.');
+    }
+
+    isStreaming = false;
+    document.getElementById('msg-input').focus();
+  }
+
+  function detectUserData(text) {
+    const step = currentStep;
+    // Detect based on current step flow
+    if (step === 'onboarding-1' && !sessionData.practiceName) {
+      sessionData.practiceName = text;
+      updateSession({ practiceName: text, currentStep: 'onboarding-2' });
+      updateProgress('onboarding-2');
+      startResearchPolling();
+    } else if (step === 'onboarding-2' && !sessionData.city) {
+      sessionData.city = text;
+      updateSession({ city: text, currentStep: 'onboarding-3' });
+      updateProgress('onboarding-3');
+      animateResearchBar();
+      startScanPolling();
+    } else if (!sessionData.name && /^[A-Za-z][\w\s'-]{0,30}$/.test(text) && text.split(' ').length <= 3) {
+      // Could be first name step
+      if (step === 'onboarding-4') {
+        sessionData.name = text;
+        updateSession({ name: text, currentStep: 'onboarding-5' });
+        updateProgress('onboarding-4');
+      }
+    } else if (!sessionData.phone && /^[\d\s\-\(\)\+]{7,}$/.test(text.replace(/[^0-9+]/g, '').length >= 7 ? text : '')) {
+      sessionData.phone = text;
+      updateSession({ phone: text, currentStep: 'onboarding-6' });
+      updateProgress('onboarding-5');
+    }
+
+    // Update placeholder based on next expected input
+    updatePlaceholderFromStep();
+  }
+
+  function updatePlaceholderFromStep() {
+    const input = document.getElementById('msg-input');
+    if (!sessionData.practiceName) input.placeholder = PLACEHOLDERS.practice;
+    else if (!sessionData.city) input.placeholder = PLACEHOLDERS.city;
+    else if (!sessionData.name) input.placeholder = PLACEHOLDERS.name;
+    else if (!sessionData.phone) input.placeholder = PLACEHOLDERS.phone;
+    else input.placeholder = PLACEHOLDERS.default;
+  }
+
+  function renderAIText(bubble, text) {
+    // Strip step markers from display
+    const display = text.replace(/\[STEP:[^\]]+\]/g, '').trim();
+
+    // Check for scan URL
+    const scanMatch = display.match(/https?:\/\/[^\s]+\/scan\/[a-f0-9-]+/);
+    if (scanMatch) {
+      // Will be finalized with scan card
+      bubble.textContent = display.replace(scanMatch[0], '').trim();
+      return;
+    }
+    bubble.textContent = display;
+  }
+
+  function finalizeAIResponse(bubble, fullText) {
+    if (!bubble) return;
+    const display = fullText.replace(/\[STEP:[^\]]+\]/g, '').trim();
+
+    // Check for scan URL → render as card
+    const scanMatch = display.match(/(https?:\/\/[^\s]+\/scan\/[a-f0-9-]+)/);
+    if (scanMatch) {
+      const beforeUrl = display.replace(scanMatch[0], '').trim();
+      if (beforeUrl) bubble.textContent = beforeUrl;
+      appendScanCard(scanMatch[1]);
+      if (navigator.vibrate) navigator.vibrate(50);
+    } else {
+      bubble.textContent = display;
+    }
+
+    // Calendar widget
+    if (currentStep === 'booking' || /grab your time slot|pick a morning|pull up the calendar|here's the link to book/i.test(display)) {
+      appendCalendarWidget();
+      setStepLabel('booking');
+    }
+
+    // Booking confirmation
+    if (currentStep === 'complete' || /locked in|calendar invite|talk soon|you're all set/i.test(display)) {
+      completeBooking();
+    }
+
+    // Detect if AI just asked for a name/phone
+    if (/first name/i.test(display)) document.getElementById('msg-input').placeholder = PLACEHOLDERS.name;
+    else if (/mobile number|phone/i.test(display)) document.getElementById('msg-input').placeholder = PLACEHOLDERS.phone;
+    else if (/practice.*name|name.*practice/i.test(display)) document.getElementById('msg-input').placeholder = PLACEHOLDERS.practice;
+    else if (/city|where.*located/i.test(display)) document.getElementById('msg-input').placeholder = PLACEHOLDERS.city;
+    else if (/\?$/.test(display.trimEnd())) document.getElementById('msg-input').placeholder = PLACEHOLDERS.yesno;
+  }
+
+  // ── DOM helpers ─────────────────────────────────────────────────────────────
+  function appendMessage(role, text) {
+    const chatArea = document.getElementById('chat-area');
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    div.textContent = text;
+    chatArea.insertBefore(div, document.getElementById('typing'));
+    scrollChat();
+    return div;
+  }
+
+  function createAIBubble() {
+    const chatArea = document.getElementById('chat-area');
+    const div = document.createElement('div');
+    div.className = 'msg ai streaming';
+    chatArea.insertBefore(div, document.getElementById('typing'));
+    scrollChat();
+    return div;
+  }
+
+  function appendScanCard(url) {
+    const chatArea = document.getElementById('chat-area');
+    const a = document.createElement('a');
+    a.className = 'scan-card msg ai';
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.onclick = () => { if (navigator.vibrate) navigator.vibrate(50); };
+    a.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><div><div class="scan-card-text">Tap to see your visibility map</div><div class="scan-card-sub">Google Maps • ${sessionData.city || 'your area'} • 5-mile radius</div></div>`;
+    chatArea.insertBefore(a, document.getElementById('typing'));
+    scrollChat();
+  }
+
+  function appendCalendarWidget() {
+    if (document.getElementById('cal-widget')) return;
+    fetch('/api/research/status/' + sessionId).then(r => r.json()).catch(() => ({})).then(d => {
+      const chatArea = document.getElementById('chat-area');
+      const wrap = document.createElement('div');
+      wrap.id = 'cal-widget';
+      wrap.className = 'calendar-bubble msg ai';
+
+      const calUrl = new URL('/api/calendar-placeholder', location.origin); // will be replaced by config
+      let src = '/api/calendar-url?sessionId=' + sessionId;
+      // Build real URL with pre-fill params
+      let baseUrl = window.CALENDAR_URL || '';
+      if (baseUrl) {
+        const u = new URL(baseUrl);
+        if (sessionData.name) u.searchParams.set('name', sessionData.name);
+        if (sessionData.phone) u.searchParams.set('phone', sessionData.phone);
+        src = u.toString();
+      }
+
+      wrap.innerHTML = `<p>Pick a morning slot below — your analysis will be ready for the call</p><iframe src="${src}" allowfullscreen loading="lazy"></iframe>`;
+      chatArea.insertBefore(wrap, document.getElementById('typing'));
+      scrollChat();
+    });
+  }
+
+  function showTyping() { document.getElementById('typing').style.display = 'block'; scrollChat(); }
+  function hideTyping() { document.getElementById('typing').style.display = 'none'; }
+
+  function scrollChat() {
+    const c = document.getElementById('chat-area');
+    requestAnimationFrame(() => c.scrollTop = c.scrollHeight);
+  }
+
+  // ── Progress ─────────────────────────────────────────────────────────────────
+  function updateProgress(step) {
+    const pct = PROGRESS_STEPS[step];
+    if (!pct) return;
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = pct + '%';
+    setStepLabel(step);
+    bar.classList.add('pulse');
+    setTimeout(() => bar.classList.remove('pulse'), 400);
+  }
+
+  function setStepLabel(step) {
+    const label = STEP_LABELS[step] || STEP_LABELS['default'] || '';
+    const check = document.getElementById('step-check');
+    const el = document.getElementById('step-label');
+    el.firstChild.textContent = label;
+    if (step === 'complete') check.classList.add('show');
+  }
+
+  function animateResearchBar() {
+    const bar = document.getElementById('progress-bar');
+    let pct = 30;
+    const target = 40;
+    const interval = setInterval(() => {
+      pct += 0.5;
+      bar.style.width = pct + '%';
+      if (pct >= target) clearInterval(interval);
+    }, 100);
+    setStepLabel('onboarding-3');
+  }
+
+  function completeBooking() {
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = '100%';
+    bar.classList.add('complete');
+    setStepLabel('complete');
+    spawnConfetti();
+  }
+
+  function spawnConfetti() {
+    for (let i = 0; i < 18; i++) {
+      setTimeout(() => {
+        const p = document.createElement('div');
+        p.className = 'confetti-piece';
+        p.style.cssText = `left:${20 + Math.random() * 60}%;top:${20 + Math.random() * 30}%;background:${['#f59e0b','#22c55e','#fff'][Math.floor(Math.random()*3)]};animation-delay:${Math.random()*0.4}s;border-radius:${Math.random()>0.5?'50%':'2px'}`;
+        document.body.appendChild(p);
+        setTimeout(() => p.remove(), 1200);
+      }, i * 40);
+    }
+  }
+
+  // ── Polling ──────────────────────────────────────────────────────────────────
+  function startResearchPolling() {
+    if (researchPolling) return;
+    researchPolling = setInterval(async () => {
+      try {
+        const r = await fetch('/api/research/status/' + sessionId);
+        const d = await r.json();
+        if (d.status === 'complete') {
+          clearInterval(researchPolling);
+          researchPolling = null;
+          document.getElementById('progress-bar').classList.add('pulse');
+        }
+      } catch {}
+    }, 3000);
+  }
+
+  function startScanPolling() {
+    if (scanPolling) return;
+    scanPolling = setInterval(async () => {
+      try {
+        const r = await fetch('/api/scan/status/' + sessionId);
+        const d = await r.json();
+        if (d.status === 'complete') {
+          clearInterval(scanPolling);
+          scanPolling = null;
+          handleScanReady();
+        }
+      } catch {}
+    }, 5000);
+  }
+
+  function handleScanReady() {
+    const label = document.getElementById('step-label');
+    label.firstChild.textContent = 'Scan complete — results ready';
+    document.getElementById('progress-bar').classList.add('pulse');
+  }
+
+  // ── Session API ──────────────────────────────────────────────────────────────
+  async function updateSession(data) {
+    try {
+      await fetch('/api/session/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, ...data })
+      });
+    } catch {}
+  }
+
+  // ── Ticker ───────────────────────────────────────────────────────────────────
+  function startTicker() {
+    const el = document.getElementById('ticker-text');
+    el.textContent = SOCIAL_PROOF[0];
+    setInterval(() => {
+      el.classList.add('fade');
+      setTimeout(() => {
+        tickerIdx = (tickerIdx + 1) % SOCIAL_PROOF.length;
+        el.textContent = SOCIAL_PROOF[tickerIdx];
+        el.classList.remove('fade');
+      }, 400);
+    }, 8000);
+  }
+
+  // ── Countdown ────────────────────────────────────────────────────────────────
+  function startCountdown() {
+    function update() {
+      const elapsed = Date.now() - sessionStart;
+      const remaining = Math.max(0, 24 * 3600000 - elapsed);
+      const h = Math.floor(remaining / 3600000);
+      const m = Math.floor((remaining % 3600000) / 60000);
+      const s = Math.floor((remaining % 60000) / 1000);
+      document.getElementById('countdown').textContent =
+        `Analysis expires in ${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+    update();
+    setInterval(update, 1000);
+  }
+
+  // ── Input handlers ────────────────────────────────────────────────────────────
+  const input = document.getElementById('msg-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  input.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  });
+
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+
+  // Expose calendar URL from server config
+  fetch('/api/config').then(r => r.json()).then(d => {
+    if (d.calendarWidgetUrl) window.CALENDAR_URL = d.calendarWidgetUrl;
+  }).catch(() => {});
+
+  // ── Boot ─────────────────────────────────────────────────────────────────────
+  init();
+
+})();
+</script>
+</body>
+</html>

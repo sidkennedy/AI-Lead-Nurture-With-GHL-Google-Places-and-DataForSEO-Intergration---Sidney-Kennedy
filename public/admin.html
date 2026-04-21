@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Powered Up AI — Admin</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a1a;color:#e0e0e0;font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;min-height:100vh}
+h1{font-size:20px;font-weight:700;color:#fff}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #2a2a2a;background:#111}
+.brand{display:flex;align-items:center;gap:10px}
+.dot{width:8px;height:8px;border-radius:50%;background:#22c55e}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:20px 24px}
+.stat-card{background:#222;border-radius:10px;padding:16px;text-align:center}
+.stat-card .val{font-size:28px;font-weight:700;color:#f59e0b}
+.stat-card .lbl{font-size:12px;color:#888;margin-top:4px}
+.filters{display:flex;gap:8px;padding:0 24px 14px;flex-wrap:wrap}
+.filter-btn{padding:6px 14px;border-radius:20px;border:1px solid #333;background:transparent;color:#aaa;cursor:pointer;font-size:13px;transition:all 0.15s}
+.filter-btn.active{background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:600}
+.table-wrap{padding:0 24px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;color:#666;font-weight:500;border-bottom:1px solid #2a2a2a;white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid #1e1e1e;vertical-align:top;white-space:nowrap}
+tr.data-row{cursor:pointer;transition:background 0.1s}
+tr.data-row:hover{background:#222}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-active{background:#1a3a1a;color:#22c55e}
+.badge-booked{background:#3a2a00;color:#f59e0b}
+.badge-not-interested{background:#2a1a1a;color:#ef4444}
+.badge-dropped{background:#222;color:#666}
+.detail-row{display:none;background:#111}
+.detail-row.open{display:table-row}
+.detail-cell{padding:16px 20px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.detail-section{background:#1a1a1a;border-radius:8px;padding:12px}
+.detail-section h3{font-size:12px;font-weight:600;color:#888;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px}
+.transcript{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto}
+.msg-bubble{padding:7px 11px;border-radius:12px;font-size:13px;line-height:1.4;max-width:85%}
+.msg-bubble.user{align-self:flex-end;background:#1e3a5f;color:#e0e0e0}
+.msg-bubble.ai{align-self:flex-start;background:#2a2a2a;color:#e0e0e0}
+.msg-time{font-size:10px;color:#555;margin-top:2px}
+.research-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.r-item{font-size:13px;color:#ccc}
+.r-item span{color:#fff;font-weight:500}
+.scan-link{color:#f59e0b;text-decoration:none;font-size:13px}
+.scan-link:hover{text-decoration:underline}
+.empty{text-align:center;padding:60px;color:#555}
+.refresh-hint{font-size:12px;color:#555;padding:0 24px 12px}
+@media(max-width:900px){.stats-row{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><h1>Powered Up AI</h1><span class="dot"></span></div>
+  <span id="refresh-status" style="font-size:12px;color:#555">Auto-refreshing every 5s</span>
+</div>
+
+<div class="stats-row">
+  <div class="stat-card"><div class="val" id="stat-today">—</div><div class="lbl">Sessions Today</div></div>
+  <div class="stat-card"><div class="val" id="stat-completed">—</div><div class="lbl">Completions</div></div>
+  <div class="stat-card"><div class="val" id="stat-booked">—</div><div class="lbl">Zooms Booked</div></div>
+  <div class="stat-card"><div class="val" id="stat-rate">—</div><div class="lbl">Completion Rate</div></div>
+</div>
+
+<div class="filters">
+  <button class="filter-btn active" data-filter="all">All</button>
+  <button class="filter-btn" data-filter="active">Active</button>
+  <button class="filter-btn" data-filter="booked">Booked</button>
+  <button class="filter-btn" data-filter="not-interested">Not Interested</button>
+  <button class="filter-btn" data-filter="dropped">Dropped Off</button>
+</div>
+<div class="refresh-hint" id="last-refresh"></div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th><th>Phone</th><th>Practice</th><th>City</th>
+        <th>Status</th><th>Step</th><th>Scan</th><th>Research</th>
+        <th>Messages</th><th>Started</th>
+      </tr>
+    </thead>
+    <tbody id="session-tbody"></tbody>
+  </table>
+  <div class="empty" id="empty-msg" style="display:none">No sessions found</div>
+</div>
+
+<script>
+const adminKey = new URLSearchParams(location.search).get('key') || '';
+let allSessions = [];
+let currentFilter = 'all';
+let openRow = null;
+
+function statusBadge(s) {
+  const map = { active:'badge-active', booked:'badge-booked', 'not-interested':'badge-not-interested', dropped:'badge-dropped' };
+  const cls = map[s] || 'badge-dropped';
+  return `<span class="badge ${cls}">${s || 'unknown'}</span>`;
+}
+
+function getSessionStatus(s) {
+  if (s.currentStep === 'complete') return 'booked';
+  const history = s.conversationHistory || [];
+  const lastAI = [...history].reverse().find(m => m.role === 'assistant')?.content || '';
+  if (/not a good fit|no worries|totally understand/i.test(lastAI)) return 'not-interested';
+  if (Date.now() - (s.createdAt || 0) > 30 * 60 * 1000 && s.currentStep !== 'complete' && history.length < 4) return 'dropped';
+  return 'active';
+}
+
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+  return new Date(ts).toLocaleDateString();
+}
+
+function renderStats(sessions) {
+  const today = sessions.filter(s => Date.now() - s.createdAt < 86400000);
+  const completed = sessions.filter(s => s.currentStep === 'complete');
+  const booked = sessions.filter(s => s.currentStep === 'complete');
+  const rate = today.length ? Math.round((completed.length / today.length) * 100) : 0;
+  document.getElementById('stat-today').textContent = today.length;
+  document.getElementById('stat-completed').textContent = completed.length;
+  document.getElementById('stat-booked').textContent = booked.length;
+  document.getElementById('stat-rate').textContent = rate + '%';
+}
+
+function renderTable(sessions) {
+  const tbody = document.getElementById('session-tbody');
+  const filtered = currentFilter === 'all' ? sessions : sessions.filter(s => getSessionStatus(s) === currentFilter);
+  document.getElementById('empty-msg').style.display = filtered.length ? 'none' : 'block';
+
+  tbody.innerHTML = '';
+  filtered.forEach((s, idx) => {
+    const status = getSessionStatus(s);
+    const dataRow = document.createElement('tr');
+    dataRow.className = 'data-row';
+    dataRow.dataset.idx = idx;
+    dataRow.innerHTML = `
+      <td>${s.name || '<span style="color:#555">—</span>'}</td>
+      <td>${s.phone || '<span style="color:#555">—</span>'}</td>
+      <td>${s.practiceName || '<span style="color:#555">—</span>'}</td>
+      <td>${s.city || '<span style="color:#555">—</span>'}</td>
+      <td>${statusBadge(status)}</td>
+      <td style="color:#888;font-size:12px">${s.currentStep || '—'}</td>
+      <td><span style="color:${s.scanStatus==='complete'?'#22c55e':s.scanStatus==='running'?'#f59e0b':'#555'}">${s.scanStatus||'idle'}</span></td>
+      <td><span style="color:${s.researchStatus==='complete'?'#22c55e':s.researchStatus==='running'?'#f59e0b':'#555'}">${s.researchStatus||'idle'}</span></td>
+      <td>${s.messageCount || 0}</td>
+      <td style="color:#666;font-size:12px">${timeAgo(s.createdAt)}</td>`;
+
+    const detailRow = document.createElement('tr');
+    detailRow.className = 'detail-row';
+    detailRow.dataset.for = idx;
+    detailRow.innerHTML = `<td class="detail-cell" colspan="10">${buildDetail(s)}</td>`;
+
+    dataRow.addEventListener('click', () => {
+      if (openRow === detailRow) {
+        detailRow.classList.remove('open');
+        openRow = null;
+      } else {
+        if (openRow) openRow.classList.remove('open');
+        detailRow.classList.add('open');
+        openRow = detailRow;
+      }
+    });
+
+    tbody.appendChild(dataRow);
+    tbody.appendChild(detailRow);
+  });
+}
+
+function buildDetail(s) {
+  const rd = s.researchData;
+  const sr = s.scanResults;
+  const history = s.conversationHistory || [];
+
+  const transcript = history.map(m => `
+    <div class="msg-bubble ${m.role}">${escHtml(m.content || '').substring(0,400)}${(m.content||'').length>400?'…':''}</div>`).join('');
+
+  const researchHtml = rd ? `
+    <div class="research-grid">
+      <div class="r-item">Reviews: <span>${rd.reviews}</span></div>
+      <div class="r-item">Rating: <span>${rd.rating}★</span></div>
+      <div class="r-item">Photos: <span>${rd.photos}</span></div>
+      <div class="r-item">Profile: <span>${rd.profileScore}</span></div>
+      <div class="r-item">Pop 65+: <span>${(rd.populationOver65||0).toLocaleString()}</span></div>
+      <div class="r-item">Est. hearing loss: <span>${(rd.estimatedHearingLoss||0).toLocaleString()}</span></div>
+    </div>
+    ${rd.competitors?.length ? `<div style="margin-top:10px;font-size:12px;color:#888">Top competitors: ${rd.competitors.slice(0,3).map(c=>`${c.name} (${c.reviews} reviews)`).join(', ')}</div>` : ''}
+  ` : '<span style="color:#555">Not yet collected</span>';
+
+  const scanHtml = sr ? `
+    <div class="research-grid">
+      <div class="r-item">Visible top 3: <span>${sr.visibleTop3}/25</span></div>
+      <div class="r-item">Invisible: <span>${sr.invisible}/25</span></div>
+      <div class="r-item">% Invisible: <span>${sr.percentInvisible}%</span></div>
+      <div class="r-item">Avg rank: <span>${sr.averageRankWhereVisible || '—'}</span></div>
+    </div>
+    ${sr.topCompetitor ? `<div style="margin-top:8px;font-size:12px;color:#888">Top competitor: ${sr.topCompetitor.name} visible in ${sr.topCompetitor.visibleIn}/25</div>` : ''}
+    <a href="/scan/${s.sessionId}" target="_blank" class="scan-link" style="display:inline-block;margin-top:10px">View scan map →</a>
+  ` : '<span style="color:#555">Not yet complete</span>';
+
+  return `<div class="detail-grid">
+    <div class="detail-section">
+      <h3>Conversation Transcript</h3>
+      <div class="transcript">${transcript || '<span style="color:#555">No messages yet</span>'}</div>
+    </div>
+    <div>
+      <div class="detail-section" style="margin-bottom:12px">
+        <h3>Research Data</h3>${researchHtml}
+      </div>
+      <div class="detail-section">
+        <h3>Scan Results</h3>${scanHtml}
+      </div>
+    </div>
+  </div>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadSessions() {
+  try {
+    const r = await fetch(`/api/admin/sessions?key=${encodeURIComponent(adminKey)}`);
+    if (r.status === 401) { document.body.innerHTML = '<div style="text-align:center;padding:80px;color:#ef4444;font-size:18px">Unauthorized — check your admin key</div>'; return; }
+    allSessions = await r.json();
+    renderStats(allSessions);
+    renderTable(allSessions);
+    document.getElementById('last-refresh').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    console.error('Load error:', e);
+  }
+}
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelector('.filter-btn.active').classList.remove('active');
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderTable(allSessions);
+  });
+});
+
+loadSessions();
+setInterval(loadSessions, 5000);
+</script>
+</body>
+</html>
