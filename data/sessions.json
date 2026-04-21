@@ -241,5 +241,21 @@
     "city": null,
     "contactId": null,
     "createdAt": 1776799404023
+  },
+  "6875ce43-e326-469b-8581-aacb0bf8231b": {
+    "sessionId": "6875ce43-e326-469b-8581-aacb0bf8231b",
+    "conversationHistory": [],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776799684442
   }
 }

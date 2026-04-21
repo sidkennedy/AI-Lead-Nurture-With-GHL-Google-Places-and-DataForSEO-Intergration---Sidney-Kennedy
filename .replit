@@ -36,3 +36,9 @@ externalPort = 3000
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+DATAFORSEO_LOGIN = "contact@poweredupagency.com"
+DATAFORSEO_PASSWORD = "8e5eb2b0af21b149"
