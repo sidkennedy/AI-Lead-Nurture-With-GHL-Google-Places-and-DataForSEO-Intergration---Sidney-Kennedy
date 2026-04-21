@@ -7100,5 +7100,30 @@
     "city": null,
     "contactId": null,
     "createdAt": 1776809941007
+  },
+  "0f1c11a2-3e31-484d-96de-00c6fa03354a": {
+    "sessionId": "0f1c11a2-3e31-484d-96de-00c6fa03354a",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Welcome to your practice revenue analysis.\n\nTo get started, what's the name of your practice exactly as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776810747138
   }
 }

@@ -351,18 +351,6 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
     return false;
   }
 
-  // ── Name similarity (0–1 score) ──────────────────────────────────────────────
-  function nameSimilarity(a, b) {
-    const norm = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
-    const na = norm(a), nb = norm(b);
-    if (na === nb) return 1.0;
-    if (nb.includes(na) || na.includes(nb)) return 0.9;
-    const wordsA = na.split(/\s+/).filter(w => w.length > 2);
-    if (!wordsA.length) return 0;
-    const setB = new Set(nb.split(/\s+/));
-    return wordsA.filter(w => setB.has(w)).length / wordsA.length;
-  }
-
   // ── Places disambiguation ─────────────────────────────────────────────────────
   async function doPlacesDisambiguation(city) {
     try {
@@ -379,16 +367,9 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
         return false;
       }
 
-      const topSim = nameSimilarity(sessionData.practiceName, results[0].name);
-      if (results.length === 1 || topSim >= 0.8) {
-        // Strong single match — auto-select silently
-        finalizeCitySelection(city, results[0].placeId);
-        return false;
-      }
-
-      // Multiple ambiguous results — show cards
+      // Always show picker cards so the user can confirm their exact listing
       awaitingPlaceSelection = true;
-      document.getElementById('msg-input').placeholder = 'Tap a listing to select it...';
+      document.getElementById('msg-input').placeholder = 'Tap your listing to confirm it...';
       showPlacesCards(results, city);
       return true;
     } catch {
