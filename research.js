@@ -1,7 +1,8 @@
 const config = require('./config');
 
-// Fallback 65+ population estimates for top metro areas
+// 65+ population estimates by metro/county area (appropriate for audiology catchment)
 const METRO_65_PLUS = {
+  // Major metros
   "new york": 1450000, "los angeles": 1050000, "chicago": 610000,
   "houston": 390000, "phoenix": 450000, "philadelphia": 370000,
   "san antonio": 280000, "san diego": 340000, "dallas": 290000,
@@ -18,7 +19,19 @@ const METRO_65_PLUS = {
   "raleigh": 150000, "long beach": 95000, "virginia beach": 110000,
   "minneapolis": 190000, "tampa": 310000, "new orleans": 100000,
   "cleveland": 140000, "pittsburgh": 175000, "miami": 290000,
-  "orlando": 240000, "cincinnati": 155000
+  "orlando": 240000, "cincinnati": 155000,
+  // Florida markets (high senior concentration)
+  "sarasota": 132000, "fort myers": 145000, "naples": 98000,
+  "cape coral": 78000, "bonita springs": 52000, "venice": 38000,
+  "bradenton": 88000, "clearwater": 72000, "st. petersburg": 95000,
+  "st pete": 95000, "boca raton": 85000, "delray beach": 68000,
+  "west palm beach": 145000, "palm beach": 145000, "fort lauderdale": 185000,
+  "daytona beach": 72000, "ocala": 98000, "the villages": 85000,
+  "pensacola": 65000, "tallahassee": 52000, "gainesville": 42000,
+  // Other retirement-heavy markets
+  "scottsdale": 105000, "sun city": 48000, "sedona": 12000,
+  "myrtle beach": 75000, "hilton head": 35000, "asheville": 48000,
+  "santa fe": 42000, "palm springs": 55000, "santa barbara": 42000
 };
 
 function get65PlusEstimate(city) {
@@ -46,41 +59,54 @@ async function searchPlaces(query, apiKey, location, radius) {
 }
 
 async function getCensusData(city) {
-  try {
-    const cityClean = city.replace(/,.*$/, '').trim();
-    const stateMatch = city.match(/,\s*([A-Z]{2})$/i);
-    const stateAbbr = stateMatch ? stateMatch[1].toUpperCase() : null;
+  // First: check the lookup table (county/metro level — right scope for an audiology practice)
+  const tablePop = get65PlusEstimate(city);
+  if (tablePop !== 45000) return tablePop; // found a specific entry
 
-    // Census API: get 65+ population by place name
-    const censusUrl = `https://api.census.gov/data/2022/acs/acs5?get=B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E,NAME&for=place:*&in=state:*`;
+  // Fallback: Census API county-level query (more meaningful than city-place data)
+  try {
+    const stateMatch = city.match(/,\s*([A-Z]{2})$/i);
+    if (!stateMatch) return tablePop;
+
+    const STATE_FIPS = {
+      AL:'01',AK:'02',AZ:'04',AR:'05',CA:'06',CO:'08',CT:'09',DE:'10',FL:'12',GA:'13',
+      HI:'15',ID:'16',IL:'17',IN:'18',IA:'19',KS:'20',KY:'21',LA:'22',ME:'23',MD:'24',
+      MA:'25',MI:'26',MN:'27',MS:'28',MO:'29',MT:'30',NE:'31',NV:'32',NH:'33',NJ:'34',
+      NM:'35',NY:'36',NC:'37',ND:'38',OH:'39',OK:'40',OR:'41',PA:'42',RI:'44',SC:'45',
+      SD:'46',TN:'47',TX:'48',UT:'49',VT:'50',VA:'51',WA:'53',WV:'54',WI:'55',WY:'56',
+      DC:'11'
+    };
+    const stateCode = STATE_FIPS[stateMatch[1].toUpperCase()];
+    if (!stateCode) return tablePop;
+
+    // Query all counties in the state — smaller dataset, reliable
+    const vars = 'B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E,NAME';
+    const censusUrl = `https://api.census.gov/data/2022/acs/acs5?get=${vars}&for=county:*&in=state:${stateCode}`;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(censusUrl, { signal: controller.signal });
     clearTimeout(timeout);
 
     if (!res.ok) throw new Error('Census API error');
     const rows = await res.json();
     const header = rows[0];
-
     const nameIdx = header.indexOf('NAME');
-    const dataStart = 0;
-    const dataEnd = 12;
+    const cityClean = city.replace(/,.*$/, '').trim().toLowerCase();
 
+    let bestPop = 0;
     for (const row of rows.slice(1)) {
       const name = (row[nameIdx] || '').toLowerCase();
-      if (name.includes(cityClean.toLowerCase())) {
+      if (name.includes(cityClean)) {
         let pop65plus = 0;
-        for (let i = dataStart; i < dataEnd; i++) {
-          pop65plus += parseInt(row[i]) || 0;
-        }
-        if (pop65plus > 0) return pop65plus;
+        for (let i = 0; i < 12; i++) pop65plus += parseInt(row[i]) || 0;
+        if (pop65plus > bestPop) bestPop = pop65plus;
       }
     }
-    return get65PlusEstimate(city);
+    return bestPop > 1000 ? bestPop : tablePop;
   } catch (err) {
     console.log('[Research] Census fallback for', city, ':', err.message);
-    return get65PlusEstimate(city);
+    return tablePop;
   }
 }
 
