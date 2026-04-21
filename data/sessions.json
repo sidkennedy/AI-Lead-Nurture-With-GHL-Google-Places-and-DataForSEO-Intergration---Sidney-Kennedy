@@ -8427,5 +8427,30 @@
     "city": null,
     "contactId": null,
     "createdAt": 1776812538738
+  },
+  "2bde0e7d-2bd2-472a-b758-3307ee756cc0": {
+    "sessionId": "2bde0e7d-2bd2-472a-b758-3307ee756cc0",
+    "conversationHistory": [
+      {
+        "role": "user",
+        "content": "__init__"
+      },
+      {
+        "role": "assistant",
+        "content": "Hey there! Welcome to your practice revenue analysis — I'm going to walk you through some real data we've pulled on your business and show you exactly where the gaps are.\n\nTo get started, what's the name of your practice as it appears on Google Maps?"
+      }
+    ],
+    "status": "active",
+    "scanStatus": "idle",
+    "researchStatus": "idle",
+    "researchData": null,
+    "scanResults": null,
+    "currentStep": "onboarding-1",
+    "name": null,
+    "phone": null,
+    "practiceName": null,
+    "city": null,
+    "contactId": null,
+    "createdAt": 1776812912082
   }
 }

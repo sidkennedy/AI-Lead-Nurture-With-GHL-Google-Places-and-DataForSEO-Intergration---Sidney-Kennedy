@@ -27,8 +27,8 @@ html,body{height:100%;height:100dvh;overflow:hidden;overscroll-behavior:none;-we
 .ov-btn:active{transform:scale(0.97)}
 .ov-hint{font-size:11px;color:#3a3a3a;opacity:0;animation:fadeInUp 0.5s ease 1.8s forwards}
 
-/* App shell */
-#app{display:flex;flex-direction:column;height:100%;height:100dvh;opacity:0;transition:opacity 0.4s ease}
+/* App shell — position:fixed keeps it anchored to visual viewport when iOS keyboard scrolls the page */
+#app{display:flex;flex-direction:column;position:fixed;left:0;right:0;top:0;height:100dvh;opacity:0;transition:opacity 0.4s ease}
 #app.visible{opacity:1}
 
 /* Top bar */
@@ -48,7 +48,7 @@ html,body{height:100%;height:100dvh;overflow:hidden;overscroll-behavior:none;-we
 #step-label{font-size:11px;color:#666;padding:4px 14px 4px;height:19px;overflow:hidden}
 
 /* Chat area */
-#chat-area{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;-webkit-overflow-scrolling:touch}
+#chat-area{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .msg{max-width:80%;padding:10px 14px;border-radius:18px;font-size:15px;line-height:1.45;word-break:break-word;animation:msgIn 0.2s ease}
 @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 .msg.user{align-self:flex-end;background:#007AFF;color:#fff;border-bottom-right-radius:4px}
@@ -253,11 +253,14 @@ html,body{height:100%;height:100dvh;overflow:hidden;overscroll-behavior:none;-we
     function syncViewport() {
       const vv = window.visualViewport;
       if (!vv) return;
+      // Pin app to the exact visible area — prevents iOS keyboard scroll from hiding content
+      app.style.top = vv.offsetTop + 'px';
       app.style.height = vv.height + 'px';
     }
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', syncViewport);
       window.visualViewport.addEventListener('scroll', syncViewport);
+      syncViewport(); // Set immediately so there's no flash
     }
 
     // ── Overlay dismiss (tap or auto after 3s) ────────────────────────────────
