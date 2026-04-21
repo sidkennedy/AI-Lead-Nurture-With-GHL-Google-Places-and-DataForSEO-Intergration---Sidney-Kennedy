@@ -94,13 +94,22 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
 #step-check.show{opacity:1}
 
 /* Place disambiguation cards */
-.places-cards{display:flex;flex-direction:column;gap:8px;width:82%;align-self:flex-start;margin-top:2px}
-.place-card{background:#1E1E1E;border:1px solid #3a3a3a;border-radius:14px;padding:14px 16px;min-height:60px;cursor:pointer;transition:border-color 0.15s ease,background 0.15s ease;display:flex;flex-direction:column;justify-content:center;-webkit-tap-highlight-color:transparent;animation:msgIn 0.2s ease}
-.place-card:hover,.place-card:active{border-color:#f59e0b;background:#252525}
-.place-card-name{font-size:14px;font-weight:600;color:#fff;line-height:1.3}
-.place-card-address{font-size:12px;color:#888;margin-top:3px}
-.place-card-rating{font-size:12px;color:#f59e0b;margin-top:3px}
-.place-card-none{color:#666;font-size:13px;text-align:center;border-style:dashed;border-color:#2a2a2a}
+.places-cards{display:flex;flex-direction:column;gap:10px;width:88%;align-self:flex-start;margin-top:4px}
+.place-card{background:#1C1C1E;border:1px solid #333;border-radius:16px;overflow:hidden;cursor:pointer;transition:border-color 0.15s ease,transform 0.1s ease;-webkit-tap-highlight-color:transparent;animation:msgIn 0.2s ease}
+.place-card:hover,.place-card:active{border-color:#f59e0b;transform:scale(1.01)}
+.place-card-photo{width:100%;height:118px;background:#2a2a2a center/cover no-repeat;border-bottom:1px solid #2a2a2a}
+.place-card-photo-placeholder{width:100%;height:118px;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);display:flex;align-items:center;justify-content:center;font-size:36px}
+.place-card-body{padding:11px 14px 13px}
+.place-card-name{font-size:14px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:5px}
+.place-card-stars{display:flex;align-items:center;gap:4px;margin-bottom:4px}
+.place-card-stars-filled{color:#f59e0b;font-size:13px;letter-spacing:0.5px}
+.place-card-rating-num{font-size:12px;font-weight:600;color:#f59e0b}
+.place-card-reviews{font-size:12px;color:#666}
+.place-card-address{font-size:11px;color:#777;display:flex;align-items:flex-start;gap:5px;line-height:1.4}
+.place-card-address svg{flex-shrink:0;margin-top:1px}
+.place-card-category{display:inline-block;background:#2a2a2a;border-radius:6px;padding:2px 8px;font-size:10px;color:#999;margin-top:6px;text-transform:capitalize}
+.place-card-none{background:#161616;border:1px dashed #2a2a2a;border-radius:14px;padding:13px 16px;color:#555;font-size:13px;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color 0.15s,color 0.15s}
+.place-card-none:hover,.place-card-none:active{border-color:#555;color:#888}
 </style>
 </head>
 <body>
@@ -390,12 +399,21 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
     startScanPolling();
   }
 
+  function renderStars(rating) {
+    const full = Math.floor(rating);
+    const half = (rating - full) >= 0.5 ? 1 : 0;
+    const empty = 5 - full - half;
+    return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(empty);
+  }
+
   function showPlacesCards(results, city) {
     const chatArea = document.getElementById('chat-area');
 
     const prompt = document.createElement('div');
     prompt.className = 'msg ai';
-    prompt.textContent = 'Found a few listings for that — which one is yours?';
+    prompt.textContent = results.length === 1
+      ? 'I found this listing — is this your practice?'
+      : 'I found a few listings nearby — which one is yours?';
     chatArea.insertBefore(prompt, document.getElementById('typing'));
 
     const container = document.createElement('div');
@@ -405,16 +423,42 @@ html,body{height:100%;overflow:hidden;background:#1a1a1a;font-family:system-ui,-
     results.forEach(place => {
       const card = document.createElement('div');
       card.className = 'place-card';
-      const stars = place.rating ? `⭐ ${place.rating}` : '';
-      card.innerHTML = `<div class="place-card-name">${place.name}</div><div class="place-card-address">${place.address}</div>${stars ? `<div class="place-card-rating">${stars}</div>` : ''}`;
+
+      const photoHtml = place.photoUrl
+        ? `<div class="place-card-photo" style="background-image:url('${place.photoUrl}')"></div>`
+        : `<div class="place-card-photo-placeholder">🏥</div>`;
+
+      const starsHtml = place.rating
+        ? `<div class="place-card-stars">
+            <span class="place-card-stars-filled">${renderStars(place.rating)}</span>
+            <span class="place-card-rating-num">${place.rating}</span>
+            <span class="place-card-reviews">(${(place.userRatingsTotal || 0).toLocaleString()} reviews)</span>
+           </div>`
+        : '';
+
+      const categoryHtml = place.category
+        ? `<div class="place-card-category">${place.category}</div>`
+        : '';
+
+      const pinSvg = `<svg width="10" height="13" viewBox="0 0 10 13" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 0C2.24 0 0 2.24 0 5c0 3.75 5 8 5 8s5-4.25 5-8c0-2.76-2.24-5-5-5zm0 6.5A1.5 1.5 0 1 1 5 3.5a1.5 1.5 0 0 1 0 3z" fill="#666"/></svg>`;
+
+      card.innerHTML = `
+        ${photoHtml}
+        <div class="place-card-body">
+          <div class="place-card-name">${place.name}</div>
+          ${starsHtml}
+          <div class="place-card-address">${pinSvg}<span>${place.address}</span></div>
+          ${categoryHtml}
+        </div>`;
+
       card.addEventListener('click', () => selectPlace(place, city));
       card.addEventListener('touchend', e => { e.preventDefault(); selectPlace(place, city); });
       container.appendChild(card);
     });
 
     const noneCard = document.createElement('div');
-    noneCard.className = 'place-card place-card-none';
-    noneCard.textContent = 'None of these — continue anyway';
+    noneCard.className = 'place-card-none';
+    noneCard.textContent = "None of these — continue anyway";
     noneCard.addEventListener('click', () => selectPlace(null, city));
     noneCard.addEventListener('touchend', e => { e.preventDefault(); selectPlace(null, city); });
     container.appendChild(noneCard);

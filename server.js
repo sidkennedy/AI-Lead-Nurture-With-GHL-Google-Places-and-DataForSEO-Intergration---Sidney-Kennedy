@@ -59,13 +59,23 @@ app.post('/api/places/search', async (req, res) => {
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${apiKey}`;
     const resp = await fetch(url);
     const data = await resp.json();
-    const results = (data.results || []).slice(0, 5).map(p => ({
-      placeId: p.place_id,
-      name: p.name,
-      address: p.formatted_address || '',
-      rating: p.rating || null,
-      userRatingsTotal: p.user_ratings_total || 0
-    }));
+    const results = (data.results || []).slice(0, 5).map(p => {
+      const photoRef = p.photos && p.photos[0] ? p.photos[0].photo_reference : null;
+      const photoUrl = photoRef
+        ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=600&photoreference=${photoRef}&key=${apiKey}`
+        : null;
+      const skipTypes = new Set(['point_of_interest','establishment','health','doctor','store','food','lodging']);
+      const category = (p.types || []).find(t => !skipTypes.has(t));
+      return {
+        placeId: p.place_id,
+        name: p.name,
+        address: p.formatted_address || '',
+        rating: p.rating || null,
+        userRatingsTotal: p.user_ratings_total || 0,
+        photoUrl,
+        category: category ? category.replace(/_/g, ' ') : null
+      };
+    });
     res.json({ results });
   } catch (err) {
     console.error('[Places Search] Error:', err.message);
