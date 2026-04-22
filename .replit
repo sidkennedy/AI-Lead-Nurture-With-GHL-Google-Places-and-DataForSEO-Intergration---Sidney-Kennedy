@@ -47,3 +47,7 @@ GOOGLE_PLACES_KEY = "AIzaSyD_HUQJUmZs3YoLxF6MhNWiXAmDaNc45gQ"
 [deployment]
 deploymentTarget = "vm"
 run = ["node", "server.js"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 60000
