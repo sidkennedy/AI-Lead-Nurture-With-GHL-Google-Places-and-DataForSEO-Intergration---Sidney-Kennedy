@@ -6,6 +6,7 @@ const prompts = require('./prompts');
 const conversations = require('./conversations');
 const ghl = require('./ghl');
 const brain = require('./brain');
+const { fetchCompetitorVelocity, findReferralSources, refreshRecentReviews } = require('./research');
 
 const FILE = path.join(__dirname, 'data', 'followups.json');
 
@@ -24,6 +25,18 @@ const MORNING_START = 7;  // 7am
 const MORNING_END = 8;    // 8am
 const EVENING_START = 16; // 4pm
 const EVENING_END = 20;   // 8pm
+
+// ─── Cadence Constants ────────────────────────────────────────────────────────
+
+// Positions 2-5: first-week hooks (days 0, 2, 4, 7 from first follow-up)
+// Positions 6-21: bi-weekly nurtures (every 3-4 days for 8 weeks = 16 messages)
+// Position 22+: monthly nurtures indefinitely
+
+const BIWEEKLY_START = 6;   // first bi-weekly position
+const BIWEEKLY_END = 21;    // last bi-weekly position (16 messages over ~8 weeks)
+const BIWEEKLY_DAYS_MIN = 3;
+const BIWEEKLY_DAYS_MAX = 4;
+const MONTHLY_DAYS = 30;
 
 // ─── Timezone Estimation ──────────────────────────────────────────────────────
 
@@ -209,6 +222,110 @@ function formatConversationHistory(exchanges) {
     .join('\n');
 }
 
+// ─── Enrichment Fetching ──────────────────────────────────────────────────────
+
+/**
+ * Fetch all three enrichment data points fresh at follow-up generation time:
+ * 1. recentReviews — live re-fetch from Google Place Details using stored placeId
+ * 2. competitorVelocityDelta — live diff vs stored competitor review counts
+ * 3. nearbyReferralSources — fetch once if not already stored (or if empty)
+ *
+ * Mutates researchData in place and persists back to the conversation record.
+ * Returns an enrichment summary object for prompt injection.
+ */
+async function fetchEnrichments(contactId, researchData) {
+  const apiKey = process.env.GOOGLE_PLACES_KEY;
+  const enrichment = {
+    recentReviews: researchData?.recentReviews || [],
+    competitorVelocityDelta: null,
+    nearbyReferralSources: researchData?.nearbyReferralSources || []
+  };
+
+  if (!researchData) return enrichment;
+
+  let needsPersist = false;
+
+  // 1. Recent reviews — always re-fetched live so they stay current
+  if (researchData.placeId) {
+    try {
+      const freshReviews = await refreshRecentReviews(researchData.placeId, apiKey);
+      if (freshReviews.length > 0) {
+        enrichment.recentReviews = freshReviews;
+        researchData.recentReviews = freshReviews;
+        needsPersist = true;
+        console.log(`[Followups] Refreshed ${freshReviews.length} reviews for ${contactId}`);
+      }
+    } catch (err) {
+      console.log(`[Followups] Review refresh error for ${contactId}:`, err.message);
+    }
+  }
+
+  // 2. Competitor velocity — always re-fetched to get a fresh diff
+  try {
+    const delta = await fetchCompetitorVelocity(researchData, apiKey);
+    if (delta) {
+      enrichment.competitorVelocityDelta = delta;
+      console.log(`[Followups] Competitor velocity for ${contactId}: "${delta}"`);
+    }
+    // Persist if baseline counts were updated (even when no positive delta)
+    if (researchData._competitorBaselineUpdated) {
+      needsPersist = true;
+      delete researchData._competitorBaselineUpdated;
+    }
+  } catch (err) {
+    console.log(`[Followups] Competitor velocity fetch error for ${contactId}:`, err.message);
+  }
+
+  // 3. Referral sources — fetch once; re-fetch if empty (e.g. pre-existing contacts)
+  if (enrichment.nearbyReferralSources.length === 0 && researchData.lat != null && researchData.lng != null) {
+    try {
+      const sources = await findReferralSources(researchData.lat, researchData.lng, apiKey);
+      if (sources.length > 0) {
+        enrichment.nearbyReferralSources = sources;
+        researchData.nearbyReferralSources = sources;
+        needsPersist = true;
+        console.log(`[Followups] Found ${sources.length} referral sources for ${contactId}`);
+      }
+    } catch (err) {
+      console.log(`[Followups] Referral source fetch error for ${contactId}:`, err.message);
+    }
+  }
+
+  // Persist any updated enrichment data back to the conversation record
+  if (needsPersist) {
+    conversations.update(contactId, { researchData });
+  }
+
+  return enrichment;
+}
+
+/**
+ * Format enrichment data into prompt-ready strings.
+ */
+function formatEnrichmentContext(enrichment) {
+  const parts = [];
+
+  if (enrichment.recentReviews && enrichment.recentReviews.length > 0) {
+    const reviewLines = enrichment.recentReviews
+      .map(r => `- ${r.author}: "${r.text}"`)
+      .join('\n');
+    parts.push(`RECENT GOOGLE REVIEWS (their actual patients, use names/quotes directly):\n${reviewLines}`);
+  }
+
+  if (enrichment.competitorVelocityDelta) {
+    parts.push(`COMPETITOR REVIEW VELOCITY (fresh as of now):\n- ${enrichment.competitorVelocityDelta}`);
+  }
+
+  if (enrichment.nearbyReferralSources && enrichment.nearbyReferralSources.length > 0) {
+    const sourceLines = enrichment.nearbyReferralSources
+      .map(s => `- ${s.name} (${s.distKm}km away)`)
+      .join('\n');
+    parts.push(`NEARBY REFERRAL SOURCES (real businesses within 2km):\n${sourceLines}`);
+  }
+
+  return parts.join('\n\n');
+}
+
 // ─── Hook Message Generation ──────────────────────────────────────────────────
 
 /**
@@ -216,8 +333,8 @@ function formatConversationHistory(exchanges) {
  * Position 1 (Hook 1) is handled separately as a static send — this is only
  * called for positions 2+ where full conversation context is passed.
  */
-async function generateHookMessage(contact, position, jobType) {
-  const isNurture = jobType === 'nurture' || position >= 4;
+async function generateHookMessage(contact, position, jobType, contactId) {
+  const isNurture = jobType === 'nurture' || position >= BIWEEKLY_START;
   const promptName = isNurture ? 'followup.nurture' : 'followup.hook';
 
   const rawTemplate = prompts.get(promptName);
@@ -230,12 +347,18 @@ async function generateHookMessage(contact, position, jobType) {
     ? `Opening styles that have generated replies: ${patterns.slice(0, 2).map(p => `"${(p.example || '').slice(0, 80)}"`).join(' | ')}. Lean toward similar energy.`
     : '';
 
+  // Fetch live enrichments at generation time so they stay fresh
+  const enrichment = await fetchEnrichments(contactId, contact.researchData || null);
+  const enrichmentContext = formatEnrichmentContext(enrichment);
+
   const userPrompt = interpolate(rawTemplate, {
     firstName: contact.firstName || 'there',
     step: contact.currentStep ?? 1,
     stage,
+    position,
     conversationHistory,
-    winningPatterns
+    winningPatterns,
+    enrichmentContext
   });
 
   const systemPrompt = prompts.get('followup.system');
@@ -252,21 +375,45 @@ async function generateHookMessage(contact, position, jobType) {
 
 // ─── Sequence Progression ─────────────────────────────────────────────────────
 
+/**
+ * Schedule the next follow-up in the aggressive sustained sequence:
+ *
+ * Week 1 hooks (positions 2–5):
+ *   pos 2 → next available window (same day)
+ *   pos 3 → +2 days
+ *   pos 4 → +4 days
+ *   pos 5 → +7 days
+ *
+ * Bi-weekly nurtures (positions 6–21, 16 messages over ~8 weeks):
+ *   every 3–4 days
+ *
+ * Monthly nurtures (position 22+):
+ *   every 30 days indefinitely
+ */
 function scheduleNext(contactId, sentPosition, currentStep, lastBody, tz) {
   const context = { lastOutboundBody: lastBody, lastOutboundStep: currentStep, timezone: tz };
+  const DAY = 24 * 60 * 60 * 1000;
 
   if (sentPosition === 1) {
+    // Same-day next window
     scheduleJob({ contactId, type: 'hook', position: 2, sendAt: nextWindowMs(Date.now(), tz), context });
   } else if (sentPosition === 2) {
-    const days = 1 + Math.floor(Math.random() * 3);
-    const base = Date.now() + days * 24 * 60 * 60 * 1000;
-    scheduleJob({ contactId, type: 'hook', position: 3, sendAt: nextWindowMs(base, tz), context });
+    // Day 2
+    scheduleJob({ contactId, type: 'hook', position: 3, sendAt: nextWindowMs(Date.now() + 2 * DAY, tz), context });
   } else if (sentPosition === 3) {
-    const base = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    scheduleJob({ contactId, type: 'nurture', position: 4, sendAt: nextWindowMs(base, tz), context });
+    // Day 4 (2 more days)
+    scheduleJob({ contactId, type: 'hook', position: 4, sendAt: nextWindowMs(Date.now() + 2 * DAY, tz), context });
+  } else if (sentPosition === 4) {
+    // Day 7 (3 more days)
+    scheduleJob({ contactId, type: 'hook', position: 5, sendAt: nextWindowMs(Date.now() + 3 * DAY, tz), context });
+  } else if (sentPosition >= 5 && sentPosition < BIWEEKLY_END) {
+    // Bi-weekly nurtures: every 3–4 days for 8 weeks
+    const days = BIWEEKLY_DAYS_MIN + Math.floor(Math.random() * (BIWEEKLY_DAYS_MAX - BIWEEKLY_DAYS_MIN + 1));
+    const nextPosition = sentPosition + 1;
+    scheduleJob({ contactId, type: 'nurture', position: nextPosition, sendAt: nextWindowMs(Date.now() + days * DAY, tz), context });
   } else {
-    const base = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    scheduleJob({ contactId, type: 'nurture', position: sentPosition + 1, sendAt: nextWindowMs(base, tz), context });
+    // Monthly nurtures indefinitely
+    scheduleJob({ contactId, type: 'nurture', position: sentPosition + 1, sendAt: nextWindowMs(Date.now() + MONTHLY_DAYS * DAY, tz), context });
   }
 }
 
@@ -312,14 +459,14 @@ async function sendHook1Static(job, contact) {
   console.log(`[Followups] Hook 1 (static) sent to ${job.contactId}: "${hookText}"`);
 }
 
-// ─── AI-Generated Send (Hooks 2/3 + Nurture) ─────────────────────────────────
+// ─── AI-Generated Send (Hooks 2–5 + Nurture) ─────────────────────────────────
 
 async function sendFollowUp(job, contact, position) {
   const freshContact = conversations.get(job.contactId) || contact;
 
   let hookText = '';
   try {
-    hookText = await generateHookMessage(freshContact, position, job.type);
+    hookText = await generateHookMessage(freshContact, position, job.type, job.contactId);
   } catch (err) {
     console.error(`[Followups] Claude error for ${job.contactId}:`, err.message);
     updateJob(job.id, { status: 'skipped', error: err.message });
@@ -360,7 +507,7 @@ async function sendFollowUp(job, contact, position) {
   updateJob(job.id, { status: 'sent', sentAt: Date.now() });
   scheduleNext(job.contactId, position, freshContact.currentStep ?? null, hookText, tz);
 
-  console.log(`[Followups] Hook pos=${position} sent to ${job.contactId}: "${hookText.slice(0, 80)}"`);
+  console.log(`[Followups] ${job.type} pos=${position} sent to ${job.contactId}: "${hookText.slice(0, 80)}"`);
 }
 
 // ─── Job Processors ───────────────────────────────────────────────────────────

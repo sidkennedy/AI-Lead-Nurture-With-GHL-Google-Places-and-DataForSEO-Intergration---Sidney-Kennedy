@@ -43,7 +43,7 @@ function get65PlusEstimate(city) {
 }
 
 async function fetchPlaceDetails(placeId, apiKey) {
-  const fields = 'name,rating,user_ratings_total,photos,website,opening_hours,geometry,formatted_address';
+  const fields = 'name,rating,user_ratings_total,photos,website,opening_hours,geometry,formatted_address,reviews';
   const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fields}&key=${apiKey}`;
   const res = await fetch(url);
   const data = await res.json();
@@ -120,6 +120,136 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Extract the most recent 1–2 reviews from a Place Details result.
+ * Sorts by review time (newest first) before selecting, so the returned
+ * reviews are guaranteed to be the most recently posted.
+ * Returns an array of { author, text } objects trimmed to ~100 chars.
+ */
+function extractRecentReviews(details) {
+  if (!details || !Array.isArray(details.reviews) || details.reviews.length === 0) return [];
+  const sorted = [...details.reviews].sort((a, b) => (b.time || 0) - (a.time || 0));
+  return sorted
+    .slice(0, 2)
+    .map(r => ({
+      author: r.author_name || 'A patient',
+      text: (r.text || '').slice(0, 100).trim()
+    }))
+    .filter(r => r.text.length > 0);
+}
+
+/**
+ * Return value: plain-English delta string if any competitor gained reviews,
+ * or null if none did. Baseline counts in researchData.competitors are always
+ * updated to the current counts (even when no positive delta exists) so future
+ * calls measure correctly from this snapshot.
+ */
+async function fetchCompetitorVelocity(researchData, apiKey) {
+  if (!apiKey) return null;
+  const competitors = researchData?.competitors;
+  if (!Array.isArray(competitors) || competitors.length === 0) return null;
+
+  const deltas = [];
+  let baselineUpdated = false;
+
+  for (const comp of competitors) {
+    if (!comp.placeId) continue;
+    try {
+      const fields = 'user_ratings_total,name';
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${comp.placeId}&fields=${fields}&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const current = data.result?.user_ratings_total || 0;
+      const baseline = comp.reviews || 0;
+      const diff = current - baseline;
+
+      if (diff > 0) {
+        deltas.push({ name: comp.name, gained: diff });
+      }
+
+      // Always update baseline to current so the next call measures from here
+      if (current !== baseline) {
+        comp.reviews = current;
+        baselineUpdated = true;
+      }
+    } catch (err) {
+      console.log(`[Research] Competitor velocity fetch failed for ${comp.name}:`, err.message);
+    }
+  }
+
+  // Signal to caller whether baseline was mutated (so caller can persist if needed)
+  researchData._competitorBaselineUpdated = baselineUpdated || deltas.length > 0;
+
+  if (deltas.length === 0) return null;
+
+  // Sort by most gained
+  deltas.sort((a, b) => b.gained - a.gained);
+  const top = deltas[0];
+  return `${top.name} gained ${top.gained} new review${top.gained === 1 ? '' : 's'} since we last checked`;
+}
+
+/**
+ * Re-fetch the prospect's own recent reviews from Google Place Details.
+ * Uses the stored placeId from researchData.
+ * Returns an array of { author, text } objects, or an empty array on failure.
+ */
+async function refreshRecentReviews(placeId, apiKey) {
+  if (!apiKey || placeId == null) return [];
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=reviews&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return extractRecentReviews(data.result || null);
+  } catch (err) {
+    console.log(`[Research] Review refresh failed for placeId ${placeId}:`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Search Google Places for nearby referral sources: ENTs, audiologist referrals,
+ * and health insurance offices within ~2km of the practice.
+ * Gathers all candidates across keyword searches, deduplicates by place_id,
+ * sorts ascending by distance, and returns the top 3 closest results.
+ */
+async function findReferralSources(lat, lng, apiKey) {
+  if (!apiKey || lat == null || lng == null) return [];
+
+  const REFERRAL_KEYWORDS = [
+    'ear nose throat doctor',
+    'audiologist referral',
+    'health insurance'
+  ];
+
+  const location = `${lat},${lng}`;
+  const RADIUS_M = 2000;
+  const seen = new Set();
+  const candidates = [];
+
+  for (const keyword of REFERRAL_KEYWORDS) {
+    try {
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(keyword)}&location=${location}&radius=${RADIUS_M}&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      for (const place of (data.results || []).slice(0, 5)) {
+        if (seen.has(place.place_id)) continue;
+        seen.add(place.place_id);
+        const pLat = place.geometry?.location?.lat || lat;
+        const pLng = place.geometry?.location?.lng || lng;
+        const distKm = Math.round(haversineKm(lat, lng, pLat, pLng) * 10) / 10;
+        candidates.push({ name: place.name, distKm });
+      }
+    } catch (err) {
+      console.log(`[Research] Referral source search failed for "${keyword}":`, err.message);
+    }
+  }
+
+  // Sort by proximity ascending, return top 3 closest
+  return candidates
+    .sort((a, b) => a.distKm - b.distKm)
+    .slice(0, 3);
+}
+
 async function runResearch(session, practiceName, practiceStreet, city, confirmedPlaceId = null) {
   const sessions = require('./sessions');
   const apiKey = process.env.GOOGLE_PLACES_KEY;
@@ -149,7 +279,12 @@ async function runResearch(session, practiceName, practiceStreet, city, confirme
       populationOver65: get65PlusEstimate(city),
       estimatedHearingLoss: Math.round(get65PlusEstimate(city) * 0.33),
       messagingEnabled: false,
-      profileScore: 'weak'
+      profileScore: 'weak',
+      recentReviews: [
+        { author: 'Emma R.', text: 'This practice completely changed my quality of life — I can hear my grandkids again!', isMock: true },
+        { author: 'James T.', text: 'Professional and thorough. Highly recommend to anyone with hearing concerns.', isMock: true }
+      ],
+      nearbyReferralSources: []
     };
     sessions.update(session.sessionId, { researchData: mockData, researchStatus: 'complete' });
     return;
@@ -239,6 +374,12 @@ async function runResearch(session, practiceName, practiceStreet, city, confirme
     const photoCount = details?.photos?.length || 0;
     const profileScore = photoCount >= 30 ? 'strong' : photoCount >= 10 ? 'okay' : 'weak';
 
+    // Extract recent reviews from Place Details response
+    const recentReviews = extractRecentReviews(details);
+
+    // Find nearby referral sources (ENTs, insurance offices)
+    const nearbyReferralSources = await findReferralSources(lat, lng, apiKey);
+
     const researchData = {
       name: details?.name || place.name,
       rating: place.rating || 0,
@@ -256,11 +397,13 @@ async function runResearch(session, practiceName, practiceStreet, city, confirme
       populationOver65: pop65,
       estimatedHearingLoss: Math.round(pop65 * 0.33),
       messagingEnabled: false,
-      profileScore
+      profileScore,
+      recentReviews,
+      nearbyReferralSources
     };
 
     sessions.update(session.sessionId, { researchData, researchStatus: 'complete' });
-    console.log(`[Research] Complete for ${practiceName} in ${city}${confirmedPlaceId ? ' (confirmed placeId)' : ''}`);
+    console.log(`[Research] Complete for ${practiceName} in ${city}${confirmedPlaceId ? ' (confirmed placeId)' : ''} — ${recentReviews.length} recent reviews, ${nearbyReferralSources.length} referral sources`);
   } catch (err) {
     console.error('[Research] Error:', err.message);
     sessions.update(session.sessionId, { researchStatus: 'failed' });
@@ -273,4 +416,4 @@ function ordinal(n) {
   return s[(v - 20) % 10] || s[v] || s[0];
 }
 
-module.exports = { runResearch };
+module.exports = { runResearch, fetchCompetitorVelocity, findReferralSources, refreshRecentReviews };

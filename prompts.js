@@ -42,13 +42,13 @@ const PROMPT_META = [
   },
   {
     name: 'followup.hook',
-    label: 'Follow-Up Re-Engagement Hook (Hooks 2 & 3)',
-    description: 'AI-generated re-engagement message for Hooks 2 and 3. Receives the full conversation history so it never repeats itself. First sentence is the SMS preview — must create curiosity. Hook 1 (5-min silence) is a static "Hi [firstName]" — no prompt needed.'
+    label: 'Follow-Up Re-Engagement Hook (Hooks 2–5)',
+    description: 'AI-generated re-engagement messages for Hooks 2–5 (first 7 days). Receives full conversation history, winning patterns, and live enrichment data (recent Google reviews, competitor velocity, referral sources). First sentence is the SMS preview — must create curiosity. Hook 1 (5-min silence) is a static "Hi [firstName]" — no prompt needed.'
   },
   {
     name: 'followup.nurture',
-    label: 'Monthly Nurture Message',
-    description: 'Monthly check-in message for prospects who never booked a call. Receives full conversation history. Very light touch — one fresh data point, no pressure.'
+    label: 'Sustained Nurture Message (Bi-weekly & Monthly)',
+    description: 'Nurture message for prospects who never booked. Used for bi-weekly follow-ups (positions 6–21, every 3–4 days for 8 weeks) and monthly follow-ups (position 22+) indefinitely. Receives full conversation history and live enrichment data — recent reviews, competitor velocity, nearby referral sources.'
   },
   {
     name: 'followup.system',

@@ -127,44 +127,57 @@ If LIVE RESEARCH DATA or SCAN RESULTS are appended below, use the real numbers a
 
   // ─── Follow-Up Hook Templates (used by followups.js) ─────────────────────────
   // Hook 1 (5-min silence): static "Hi [firstName]" — no AI, no template.
-  // Placeholders for hook/nurture: {{firstName}}, {{step}}, {{stage}},
-  //   {{conversationHistory}} (full transcript), {{winningPatterns}}
+  // Placeholders: {{firstName}}, {{step}}, {{stage}}, {{position}},
+  //   {{conversationHistory}} (full transcript), {{winningPatterns}},
+  //   {{enrichmentContext}} (live reviews, competitor velocity, referral sources)
   followUpPrompts: {
     hook: `You are writing a re-engagement SMS for an audiology practice owner named {{firstName}} who went quiet mid-conversation.
 
 CONVERSATION SO FAR:
 {{conversationHistory}}
 
-Their current position in our discovery sequence: Step {{step}} ({{stage}} stage).
+Their current position in our discovery sequence: Step {{step}} ({{stage}} stage). Follow-up position: {{position}}.
 {{winningPatterns}}
+
+LIVE ENRICHMENT DATA (use the most surprising, specific detail — do not dump all of it):
+{{enrichmentContext}}
 
 RULES:
 - Your FIRST SENTENCE is the SMS text preview — open with {{firstName}} and create curiosity or urgency without giving everything away. It must make them WANT to open the full message.
 - Read the conversation history above carefully. Do NOT repeat any point, angle, or observation already made.
-- Pick a fresh hook angle based on what they haven't engaged with yet.
+- If LIVE ENRICHMENT DATA is present, lean on the most striking detail: a real reviewer's name and quote, a competitor review count gain, or a nearby referral source. Early positions (2–3) should favor real review quotes and competitor velocity. Position 4–5 can also reference referral sources.
+- If no enrichment is available, pick a fresh hook angle based on what they haven't engaged with yet.
 - 1–3 sentences max. Punchy. Casual. Feels human, not automated.
 - Do NOT pitch the call in this message. Just reignite the spark.
 - Never "just checking in." Never "hope you're doing well."
 - Plain text only. No markdown, no quotes.
 
 Strong first sentence patterns (use as inspiration, not copies):
+- "{{firstName}}, [Reviewer name] just said [quote] on your Google profile —"
+- "{{firstName}}, [Competitor] picked up [N] new reviews since we last talked —"
+- "{{firstName}}, there's a [referral source] right down the road from you —"
 - "{{firstName}}, that expiring benefits window I mentioned —"
 - "{{firstName}}, quick question about your Google Maps ranking —"
-- "{{firstName}}, most practices have no idea their top competitor is picking up —"
 
 OUTPUT: Return ONLY the message text.`,
 
-    nurture: `You are writing a monthly check-in SMS for an audiology practice owner named {{firstName}} who never booked a call.
+    nurture: `You are writing a nurture SMS for an audiology practice owner named {{firstName}} who has not booked a call.
 
 CONVERSATION SO FAR:
 {{conversationHistory}}
 
-Their last conversation stage: Step {{step}} ({{stage}} stage).
+Their last conversation stage: Step {{step}} ({{stage}} stage). Follow-up position: {{position}}.
+
+LIVE ENRICHMENT DATA (use the most relevant, specific detail for this position):
+{{enrichmentContext}}
 
 RULES:
 - Read the full conversation history. Do NOT reference anything already discussed — bring a fresh angle.
-- Very light touch. Share one specific, timely data point or industry observation — not a pitch.
-- 1–2 sentences max. No pressure. Feels like a genuinely useful note from someone who knows their industry.
+- If LIVE ENRICHMENT DATA is present, use whichever feels most surprising and actionable for the timing:
+  - Earlier nurtures (positions 6–12): lead with a real reviewer quote or competitor velocity delta.
+  - Later nurtures (positions 13+): lead with nearby referral sources — "I noticed there's a [name] right near you, do you have a referral relationship with them?"
+- Very light touch. Share one specific, timely data point — not a pitch.
+- 1–2 sentences max. No pressure. Feels like a genuinely useful note from someone watching their market closely.
 - Plain text only. No markdown, no quotes.
 
 OUTPUT: Return ONLY the message text.`
