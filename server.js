@@ -344,16 +344,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     }
   }
 
-  // ── 4.5. Fetch GHL history, recover any lost state, then handle flow ──────────
-  let rawGhlMessages = [];
-  if (resolvedConvId) {
-    rawGhlMessages = await ghl.fetchMessages(resolvedConvId);
-  }
-
-  // Recover state that may have been lost on server restart, then use it everywhere
-  recoverStateFromHistory(contactId, fresh, rawGhlMessages);
-  fresh = conversations.get(contactId);
-
+  // ── 4.5. Handle address confirmation or name-retry states (no Claude call) ────
   if (fresh?.confirmationPending) {
     return await handleConfirmationReply(contactId, messageBody, fresh, resolvedConvId);
   }
@@ -361,10 +352,15 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     return await handleRetryName(contactId, messageBody, fresh, resolvedConvId);
   }
 
-  // Build Claude message history from already-fetched GHL messages
-  let messages = rawGhlMessages.length > 0
-    ? buildMessagesFromGhl(rawGhlMessages)
-    : buildMessagesFromLocal(fresh?.exchanges || []);
+  // ── 4.6. Fetch full conversation from GHL (authoritative source) ──────────────
+  let messages = [];
+  if (resolvedConvId) {
+    const ghlMessages = await ghl.fetchMessages(resolvedConvId);
+    messages = buildMessagesFromGhl(ghlMessages);
+  }
+  if (messages.length === 0) {
+    messages = buildMessagesFromLocal(fresh?.exchanges || []);
+  }
 
   if (messages.length === 0) {
     console.log(`[Webhook] No message history for ${contactId}`);
@@ -975,11 +971,45 @@ app.post('/admin/prompts/:name', requireAdmin, (req, res) => {
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
+// ─── Startup State Bootstrap ──────────────────────────────────────────────────
+// On every restart, reload state for all active (non-booked, last 30 days)
+// contacts by reading their GHL conversation history. Runs in the background
+// so it never delays server startup or incoming messages.
+
+async function bootstrapStateFromGHL() {
+  const all = conversations.getAll();
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  const active = Object.values(all).filter(c => {
+    if (c.booked) return false;
+    const last = c.lastMessageAt || c.createdAt || 0;
+    return last > thirtyDaysAgo;
+  });
+
+  if (active.length === 0) {
+    console.log('[Bootstrap] No active contacts to restore');
+    return;
+  }
+
+  console.log(`[Bootstrap] Restoring state for ${active.length} active contact(s)...`);
+
+  const results = await Promise.allSettled(active.map(async (contact) => {
+    const convId = (contact.exchanges || []).map(e => e.conversationId).find(id => !!id);
+    if (!convId) return;
+    const msgs = await ghl.fetchMessages(convId);
+    recoverStateFromHistory(contact.contactId, contact, msgs);
+  }));
+
+  const ok = results.filter(r => r.status === 'fulfilled').length;
+  console.log(`[Bootstrap] Done — ${ok}/${active.length} contact(s) restored`);
+}
+
 app.listen(PORT, () => {
   console.log(`Powered Up AI — GMB Message Generator running on port ${PORT}`);
   prompts.seed();
   brain.startScheduledAnalysis();
   followups.startScheduler();
+  bootstrapStateFromGHL().catch(err => console.error('[Bootstrap] Error:', err.message));
 });
 
 // ─── Scan Page Builder ────────────────────────────────────────────────────────
