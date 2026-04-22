@@ -18,6 +18,7 @@ const ghl = require('./ghl');
 const { runResearch } = require('./research');
 const { startScan } = require('./scanner');
 const brain = require('./brain');
+const followups = require('./followups');
 
 const app = express();
 app.use(express.json());
@@ -183,6 +184,9 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     conversationId
   });
 
+  // Cancel any pending follow-up jobs before processing the reply (they replied — no hooks needed)
+  followups.cancelContactJobs(contactId);
+
   // Store inbound in brain (for stats and contact history) then mark previous outbound replied
   const stepAtInbound = conversations.get(contactId)?.currentStep ?? null;
   brain.recordInbound(contactId, messageBody, stepAtInbound);
@@ -344,6 +348,8 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     });
     // Record in learning brain (stage derived from detectedStep)
     brain.recordOutbound(contactId, reply, detectedStep);
+    // Schedule a 5-min silence check — if they don't reply, Hook 1 fires automatically
+    followups.scheduleSilenceCheck(contactId, detectedStep, reply);
     console.log(`[Webhook] Sent to ${contactId} (step ${detectedStep}): "${reply.slice(0, 80)}"`);
   }
 }
@@ -604,12 +610,28 @@ app.post('/api/brain/analyze', requireAdmin, (req, res) => {
   res.json({ ok: true, patterns: result });
 });
 
+// ─── Admin: Follow-Up Job Monitoring ─────────────────────────────────────────
+
+app.get('/api/followups', requireAdmin, (req, res) => {
+  const { status, contactId } = req.query;
+  let jobs = followups.getAllJobs(status || null);
+  if (contactId) jobs = jobs.filter(j => j.contactId === contactId);
+  jobs = jobs.sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
+  res.json(jobs);
+});
+
+app.get('/api/followups/:contactId', requireAdmin, (req, res) => {
+  const jobs = followups.getContactJobs(req.params.contactId);
+  res.json(jobs.sort((a, b) => b.createdAt - a.createdAt));
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Powered Up AI — GMB Message Generator running on port ${PORT}`);
   brain.startScheduledAnalysis();
+  followups.startScheduler();
 });
 
 // ─── Scan Page Builder ────────────────────────────────────────────────────────

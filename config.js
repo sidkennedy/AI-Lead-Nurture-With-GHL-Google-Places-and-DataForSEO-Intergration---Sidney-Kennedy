@@ -103,5 +103,68 @@ Handle these when they arise, then steer back to booking:
 If the prospect expresses strong intent at any point ("yes let's book", "I want the Zoom", "let's do it"), skip directly to Step 8.
 
 ━━━ LIVE DATA ━━━
-If LIVE RESEARCH DATA or SCAN RESULTS are appended below, use the real numbers at Step 6 and beyond. Never fabricate numbers. If no data is available, rely on the scripted language only.`
+If LIVE RESEARCH DATA or SCAN RESULTS are appended below, use the real numbers at Step 6 and beyond. Never fabricate numbers. If no data is available, rely on the scripted language only.`,
+
+  // ─── Follow-Up Hook Templates (used by followups.js) ─────────────────────────
+  // Placeholders: {{firstName}}, {{step}}, {{stage}}, {{lastOutbound}}, {{lastReply}}
+  // CRITICAL: The FIRST SENTENCE is the SMS text preview — that's all they see before opening.
+  // It must create curiosity or urgency on its own, without giving away the full message.
+  followUpPrompts: {
+    hook1: `Generate a short re-engagement text message (1-3 sentences max) for an audiology practice owner named {{firstName}} who went quiet mid-conversation.
+
+Their position in our discovery sequence: Step {{step}} ({{stage}} stage).
+The last message we sent them: "{{lastOutbound}}"
+Their last reply (if any): "{{lastReply}}"
+
+RULES:
+- CRITICAL: Your FIRST SENTENCE is the SMS text preview. Open with {{firstName}}. Create curiosity or urgency without revealing everything — it must make them WANT to open the full message.
+- Never "just checking in." Never "hope you're doing well." These kill reply rates.
+- 1-3 sentences. Punchy. Casual. Feels human, not automated.
+- Do NOT pitch the call in this message. Just reignite the spark.
+- Plain text only. No markdown, no quotes.
+
+Strong first sentence patterns (use as inspiration, not copies):
+- "{{firstName}}, that expiring benefits window I mentioned —"
+- "{{firstName}}, quick question about your Google Maps ranking —"
+- "{{firstName}}, your top competitor just picked up 12 reviews this month —"
+
+OUTPUT: Return ONLY the message text.`,
+
+    hook2: `Generate a second-touch follow-up text for an audiology practice owner named {{firstName}} who hasn't replied to our last two messages.
+
+Their conversation stage: Step {{step}} ({{stage}}).
+Last message we sent: "{{lastOutbound}}"
+
+RULES:
+- Different angle from the last hook — don't repeat the same point.
+- First sentence = text preview, must create urgency or curiosity.
+- 1-3 sentences. Light, casual, ends with a simple low-friction question.
+- Plain text only.
+
+OUTPUT: Return ONLY the message text.`,
+
+    hook3: `Generate a third-touch re-engagement text for an audiology practice owner named {{firstName}} who hasn't responded to two previous follow-ups.
+
+Conversation stage: Step {{step}} ({{stage}} stage). They've seen two previous messages.
+
+RULES:
+- Lighter tone. Acknowledge the silence without being awkward about it.
+- Fresh angle they haven't heard from us yet.
+- 1-2 sentences. Ends with the simplest possible question.
+- Plain text only.
+
+OUTPUT: Return ONLY the message text.`,
+
+    nurture: `Generate a brief monthly check-in text for an audiology practice owner named {{firstName}} who never booked a call.
+
+Their last conversation stage: Step {{step}} ({{stage}} stage).
+
+RULES:
+- Very light touch. Share one fresh, specific data point or industry observation — not a pitch.
+- 1-2 sentences max. No pressure.
+- Feels like a genuinely useful note from someone who knows their industry.
+- Plain text only.
+
+OUTPUT: Return ONLY the message text.`
+  }
 };
