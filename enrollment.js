@@ -7,14 +7,10 @@
  * Exports: runEnrollment({ tag, dryRun, delayMs })
  */
 
-const path = require('path');
-const fs   = require('fs');
-
 const ghl           = require('./ghl');
 const conversations = require('./conversations');
-const { nextWindowMs, nextEmailWindowMs, estimateTimezone } = require('./followups');
-
-const FOLLOWUPS_FILE = path.join(__dirname, 'data', 'followups.json');
+const followupsMod  = require('./followups');
+const { nextWindowMs, nextEmailWindowMs, estimateTimezone, scheduleJob, getAllJobs } = followupsMod;
 
 // ─── Anthropic (lazy) ─────────────────────────────────────────────────────────
 
@@ -33,43 +29,8 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function loadFollowupJobs() {
-  try {
-    if (!fs.existsSync(FOLLOWUPS_FILE)) return [];
-    return JSON.parse(fs.readFileSync(FOLLOWUPS_FILE, 'utf8'));
-  } catch { return []; }
-}
-
-function saveFollowupJobs(jobs) {
-  const dir = path.join(__dirname, 'data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(FOLLOWUPS_FILE, JSON.stringify(jobs, null, 2));
-}
-
-function makeJobId() {
-  return `fu-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
 function hasPendingJob(contactId) {
-  const jobs = loadFollowupJobs();
-  return jobs.some(j => j.contactId === contactId && j.status === 'pending');
-}
-
-function scheduleJob({ contactId, type, position, sendAt, context }) {
-  const jobs = loadFollowupJobs();
-  jobs.push({
-    id:        makeJobId(),
-    contactId,
-    type,
-    position,
-    sendAt,
-    status:    'pending',
-    context:   context || {},
-    createdAt: Date.now(),
-    sentAt:    null,
-    error:     null
-  });
-  saveFollowupJobs(jobs);
+  return getAllJobs('pending').some(j => j.contactId === contactId);
 }
 
 // ─── Message parsing ───────────────────────────────────────────────────────────
@@ -362,8 +323,8 @@ async function runEnrollment({ tag = '', dryRun = true, delayMs = 2000, signal }
                        timezone: tz, enrolledFromScript: true } });
           if (email && !tags.includes('disable ai')) {
             const emailSendAt = nextEmailWindowMs(sendAt, tz);
-            const allJobs = loadFollowupJobs();
-            if (!allJobs.some(j => j.contactId === contactId && j.type.startsWith('email-') && j.status === 'pending')) {
+            const allJobs = getAllJobs('pending');
+            if (!allJobs.some(j => j.contactId === contactId && j.type.startsWith('email-'))) {
               scheduleJob({ contactId, type: 'email-hook', position: 2, sendAt: emailSendAt,
                 context: { timezone: tz, enrolledFromScript: true } });
             }

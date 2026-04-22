@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('./config');
 const prompts = require('./prompts');
@@ -8,7 +9,69 @@ const ghl = require('./ghl');
 const brain = require('./brain');
 const { fetchCompetitorVelocity, findReferralSources, refreshRecentReviews } = require('./research');
 
-const FILE = path.join(__dirname, 'data', 'followups.json');
+const _pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+// In-memory job cache — load() reads sync from here; DB is the persistence layer
+let _jobCache = [];
+
+async function _initJobsFromDb() {
+  try {
+    const { rows } = await _pool.query('SELECT * FROM followup_jobs ORDER BY send_at ASC');
+    _jobCache = rows.map(r => ({
+      id:        r.id,
+      contactId: r.contact_id,
+      type:      r.type,
+      position:  r.position,
+      sendAt:    r.send_at,
+      status:    r.status,
+      sentAt:    r.sent_at,
+      createdAt: r.created_at,
+      context:   r.context || {},
+      error:     r.context?.error || null
+    }));
+    console.log(`[Followups] DB loaded: ${_jobCache.length} jobs`);
+  } catch (err) {
+    console.error('[Followups] DB init error:', err.message, '— falling back to JSON');
+    _loadJobsFromJson();
+  }
+}
+
+function _loadJobsFromJson() {
+  try {
+    const FILE = path.join(__dirname, 'data', 'followups.json');
+    if (!fs.existsSync(FILE)) return;
+    const data = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    if (Array.isArray(data) && data.length > 0) {
+      _jobCache = data;
+      // Migrate to DB silently
+      _jobCache.forEach(j => _dbUpsertJob(j));
+      console.log('[Followups] Imported', _jobCache.length, 'jobs from JSON backup');
+    }
+  } catch {}
+}
+
+function _dbUpsertJob(j) {
+  _pool.query(
+    `INSERT INTO followup_jobs (id, contact_id, type, position, send_at, status, sent_at, created_at, context)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (id) DO UPDATE SET
+       status=$6, sent_at=$7, context=$9`,
+    [j.id, j.contactId, j.type, j.position ?? null, j.sendAt ?? null,
+     j.status, j.sentAt ?? null, j.createdAt ?? Date.now(),
+     JSON.stringify({ ...j.context, error: j.error || undefined })]
+  ).catch(err => console.error('[Followups] DB upsert error:', err.message));
+}
+
+function _dbBulkUpdateStatus(ids, status) {
+  if (!ids.length) return;
+  const placeholders = ids.map((_, i) => `$${i + 2}`).join(',');
+  _pool.query(
+    `UPDATE followup_jobs SET status=$1 WHERE id IN (${placeholders})`,
+    [status, ...ids]
+  ).catch(err => console.error('[Followups] DB bulk update error:', err.message));
+}
+
+_initJobsFromDb();
 
 // Lazy-init Anthropic client
 let _ai = null;
@@ -151,28 +214,24 @@ function nextEmailWindowMs(fromMs, tz) {
   return fromMs + 24 * 60 * 60 * 1000;
 }
 
-// ─── File I/O ─────────────────────────────────────────────────────────────────
-
-function ensureDir() {
-  const dir = path.join(__dirname, 'data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
+// ─── In-Memory Store (backed by PostgreSQL) ───────────────────────────────────
 
 function load() {
-  try {
-    ensureDir();
-    if (!fs.existsSync(FILE)) return [];
-    return JSON.parse(fs.readFileSync(FILE, 'utf8'));
-  } catch { return []; }
+  return _jobCache;
 }
 
 function save(jobs) {
-  try {
-    ensureDir();
-    fs.writeFileSync(FILE, JSON.stringify(jobs, null, 2));
-  } catch (err) {
-    console.error('[Followups] Write error:', err.message);
+  // Find new/changed jobs and write to DB
+  const oldIds = new Set(_jobCache.map(j => j.id));
+  const newIds = new Set(jobs.map(j => j.id));
+  // Upsert changed or new
+  for (const j of jobs) {
+    const old = _jobCache.find(o => o.id === j.id);
+    if (!old || old.status !== j.status || old.sentAt !== j.sentAt) {
+      _dbUpsertJob(j);
+    }
   }
+  _jobCache = jobs;
 }
 
 function makeId() {
