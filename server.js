@@ -1197,8 +1197,13 @@ app.get('/api/followups', requireAdmin, (req, res) => {
   const { status, contactId } = req.query;
   let jobs = followups.getAllJobs(status || null);
   if (contactId) jobs = jobs.filter(j => j.contactId === contactId);
-  jobs = jobs.sort((a, b) => b.createdAt - a.createdAt).slice(0, 200);
-  res.json(jobs);
+  // Pending: sort soonest sendAt first. Others: most recent action first.
+  if (!status || status === 'pending') {
+    jobs = jobs.filter(j => j.status === 'pending').sort((a, b) => (a.sendAt || 0) - (b.sendAt || 0));
+  } else {
+    jobs = jobs.sort((a, b) => (b.sentAt || b.createdAt || 0) - (a.sentAt || a.createdAt || 0));
+  }
+  res.json(jobs.slice(0, 300));
 });
 
 app.get('/api/followups/:contactId', requireAdmin, (req, res) => {
@@ -1449,66 +1454,192 @@ function buildAdminDashboardPage(adminKey) {
 <title>Admin Dashboard — Powered Up AI</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{background:#0f0f0f;color:#e8e8e8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:40px 16px 80px}
-.logo{font-size:13px;font-weight:600;letter-spacing:.08em;color:#555;text-transform:uppercase;text-align:center;margin-bottom:40px}
-h1{font-size:22px;font-weight:700;color:#fff;text-align:center;margin-bottom:8px}
-.subtitle{font-size:14px;color:#666;text-align:center;margin-bottom:8px;line-height:1.5}
-.refresh-info{font-size:12px;color:#444;text-align:center;margin-bottom:40px}
-.panel{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:28px;width:100%;max-width:960px;margin:0 auto 24px}
-.panel-title{font-size:15px;font-weight:700;color:#fff;margin-bottom:18px;display:flex;align-items:center;gap:10px}
-.panel-title a{font-size:13px;font-weight:500;color:#748ffc;text-decoration:none;margin-left:auto}
-.panel-title a:hover{text-decoration:underline}
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:16px;margin-bottom:0}
-.stat-box{background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:16px 14px;text-align:center}
-.stat-box .val{font-size:28px;font-weight:700;color:#fff;line-height:1}
-.stat-box .lbl{font-size:11px;color:#666;margin-top:6px;text-transform:uppercase;letter-spacing:.06em}
+body{background:#0c0c0e;color:#e2e2e2;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:32px 16px 80px}
+a{color:#818cf8;text-decoration:none}a:hover{text-decoration:underline}
+
+/* ── Header ── */
+.header{max-width:980px;margin:0 auto 32px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.header-left .logo{font-size:11px;font-weight:700;letter-spacing:.1em;color:#444;text-transform:uppercase;margin-bottom:4px}
+.header-left h1{font-size:20px;font-weight:700;color:#fff}
+.header-right{display:flex;gap:10px;flex-wrap:wrap}
+.btn{display:inline-block;font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;border:1px solid #2a2a2a;background:#1a1a1a;color:#aaa;cursor:pointer;text-decoration:none;transition:border-color .15s,color .15s}
+.btn:hover{border-color:#818cf8;color:#818cf8;text-decoration:none}
+.btn-primary{background:#1e1b4b;border-color:#4f46e5;color:#818cf8}
+.btn-primary:hover{background:#2d2b66;color:#a5b4fc}
+
+/* ── Refresh bar ── */
+.refresh-bar{max-width:980px;margin:-16px auto 20px;font-size:11px;color:#3a3a3a;text-align:right}
+
+/* ── Stats strip ── */
+.stats-strip{max-width:980px;margin:0 auto 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+.stat-card{background:#131316;border:1px solid #222;border-radius:12px;padding:16px;text-align:center}
+.stat-card .val{font-size:30px;font-weight:700;color:#fff;line-height:1.1}
+.stat-card .lbl{font-size:11px;color:#555;margin-top:5px;text-transform:uppercase;letter-spacing:.07em}
+.stat-card .sub{font-size:11px;color:#444;margin-top:3px}
+.stat-highlight .val{color:#818cf8}
+
+/* ── Panel ── */
+.panel{background:#131316;border:1px solid #1f1f1f;border-radius:16px;padding:24px;width:100%;max-width:980px;margin:0 auto 20px;overflow:hidden}
+.panel-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;gap:12px;flex-wrap:wrap}
+.panel-title{font-size:15px;font-weight:700;color:#fff}
+.panel-desc{font-size:12px;color:#444;margin-bottom:18px;line-height:1.5}
+.tab-row{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap}
+.tab{font-size:12px;font-weight:600;padding:5px 12px;border-radius:20px;border:1px solid #2a2a2a;background:transparent;color:#555;cursor:pointer;transition:all .15s}
+.tab.active{background:#1e1b4b;border-color:#4f46e5;color:#818cf8}
+.tab:hover:not(.active){border-color:#444;color:#aaa}
+
+/* ── Table ── */
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;color:#555;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:0 10px 10px;border-bottom:1px solid #2a2a2a}
-td{padding:10px;border-bottom:1px solid #1e1e1e;color:#ccc;vertical-align:top}
+th{text-align:left;color:#444;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:0 12px 10px;border-bottom:1px solid #1e1e1e;white-space:nowrap}
+td{padding:11px 12px;border-bottom:1px solid #191919;color:#bbb;vertical-align:top}
 tr:last-child td{border-bottom:none}
-.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap}
-.badge-booked{background:#14532d33;color:#4ade80;border:1px solid #14532d66}
-.badge-active{background:#1e3a5f33;color:#60a5fa;border:1px solid #1e3a5f66}
-.badge-pending{background:#3b2f1133;color:#fbbf24;border:1px solid #78450f66}
-.badge-sent{background:#14532d33;color:#4ade80;border:1px solid #14532d66}
-.badge-skipped{background:#2a1a1a33;color:#888;border:1px solid #3a2a2a66}
-.badge-cancelled{background:#2a1a1a33;color:#666;border:1px solid #3a2a2a44}
-.stage-row td{font-size:12.5px}
-.empty{color:#444;font-size:13px;padding:20px 0;text-align:center}
-.reply-rate{font-size:13px;color:#748ffc;font-weight:600}
-.loading{color:#444;text-align:center;padding:20px;font-size:13px}
+tr:hover td{background:#18181c}
+.name-cell{font-weight:500;color:#e2e2e2}
+.city-cell{font-size:11px;color:#555;margin-top:2px}
+.time-cell{font-weight:600;color:#e2e2e2}
+.time-sub{font-size:11px;color:#555;margin-top:2px}
+
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.b-sms{background:#0f1f3a;color:#60a5fa;border:1px solid #1e3a6a}
+.b-email{background:#0d2a1a;color:#34d399;border:1px solid #145228}
+.b-pending{background:#2a1f00;color:#f59e0b;border:1px solid #6b4e00}
+.b-sent{background:#0d2a1a;color:#34d399;border:1px solid #145228}
+.b-skipped{background:#1a1a1a;color:#555;border:1px solid #2a2a2a}
+.b-cancelled{background:#1a1a1a;color:#444;border:1px solid #222}
+.b-booked{background:#0d2a1a;color:#4ade80;border:1px solid #14532d}
+.b-active{background:#0f1f3a;color:#60a5fa;border:1px solid #1e3a6a}
+
+/* ── Stage label ── */
+.stage-label{font-weight:600;color:#e2e2e2;display:block}
+.stage-sub{font-size:11px;color:#555;margin-top:2px;display:block}
+
+/* ── Summary row above table ── */
+.queue-summary{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px}
+.qs-item{font-size:13px;color:#555}
+.qs-item strong{color:#e2e2e2;font-weight:600}
+.qs-item.urgent strong{color:#f59e0b}
+
+/* ── Legend ── */
+.legend{background:#0e0e11;border:1px solid #1c1c1f;border-radius:10px;padding:14px 16px;margin-bottom:18px}
+.legend-title{font-size:11px;font-weight:700;color:#444;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.legend-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.legend-item{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#555;line-height:1.4}
+.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:3px}
+.ld-1{background:#6366f1}.ld-2{background:#f59e0b}.ld-3{background:#34d399}.ld-4{background:#818cf8}
+
+/* ── Performance table ── */
+.perf-table td:first-child{color:#aaa;font-weight:500}
+.rate-good{color:#4ade80;font-weight:700}
+.rate-mid{color:#f59e0b;font-weight:700}
+.rate-low{color:#888;font-weight:700}
+
+/* ── Misc ── */
+.empty{color:#333;font-size:13px;padding:24px 0;text-align:center}
+.loading{color:#333;text-align:center;padding:24px;font-size:13px;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.dot-live{display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;margin-right:6px;animation:livepulse 2s infinite}
+@keyframes livepulse{0%,100%{opacity:1}50%{opacity:.4}}
 </style>
 </head>
 <body>
-<div class="logo">Powered Up AI</div>
-<div style="text-align:center;max-width:960px;margin:0 auto 40px">
-  <h1>Admin Dashboard</h1>
-  <p class="subtitle">Live overview of contacts, brain stats, and follow-up jobs.</p>
-  <p class="refresh-info">Auto-refreshes every 30 seconds &bull; <span id="countdown">30</span>s until next refresh</p>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">Powered Up AI</div>
+    <h1>Admin Dashboard</h1>
+  </div>
+  <div class="header-right">
+    <a class="btn" href="/admin/prompts?key=${adminKey}">Prompt Editor &rarr;</a>
+    <a class="btn btn-primary" href="/admin/enroll?key=${adminKey}">Lead Enrollment &rarr;</a>
+  </div>
 </div>
 
-<div class="panel" id="panel-brain">
-  <div class="panel-title">Brain Stats <a href="/admin/enroll?key=${adminKey}" style="margin-right:12px">Lead Enrollment &rarr;</a><a href="/admin/prompts?key=${adminKey}">Prompt Editor &rarr;</a></div>
-  <div id="brain-content"><div class="loading">Loading&hellip;</div></div>
+<div class="refresh-bar"><span class="dot-live"></span>Auto-refreshes every 30s &nbsp;&bull;&nbsp; next refresh in <span id="countdown">30</span>s</div>
+
+<!-- ── Stats Strip ── -->
+<div class="stats-strip" id="stats-strip">
+  <div class="stat-card"><div class="val" id="s-queued">—</div><div class="lbl">In Queue</div><div class="sub">messages pending</div></div>
+  <div class="stat-card"><div class="val" id="s-today" style="color:#f59e0b">—</div><div class="lbl">Sending Today</div><div class="sub">scheduled for today</div></div>
+  <div class="stat-card stat-highlight"><div class="val" id="s-sent">—</div><div class="lbl">Sent Total</div><div class="sub">all time</div></div>
+  <div class="stat-card"><div class="val" id="s-reply">—</div><div class="lbl">Reply Rate</div><div class="sub">inbound ÷ sent</div></div>
+  <div class="stat-card"><div class="val" id="s-booked" style="color:#4ade80">—</div><div class="lbl">Booked</div><div class="sub">zoom calls scheduled</div></div>
 </div>
 
-<div class="panel" id="panel-contacts">
-  <div class="panel-title">Contacts</div>
-  <div id="contacts-content"><div class="loading">Loading&hellip;</div></div>
-</div>
+<!-- ── Follow-Up Queue ── -->
+<div class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="panel-title">Follow-Up Queue</div>
+    </div>
+  </div>
+  <p class="panel-desc">All scheduled outreach messages, sorted by who gets contacted next. These fire automatically during 7–8am or 4–8pm in the contact's timezone.</p>
 
-<div class="panel" id="panel-followups">
-  <div class="panel-title">Follow-Up Queue</div>
+  <div class="legend">
+    <div class="legend-title">What the Sequence Positions Mean</div>
+    <div class="legend-grid">
+      <div class="legend-item"><div class="legend-dot ld-1"></div><span><strong style="color:#c4b5fd">Pos 2–5 &nbsp;·&nbsp; Hooks</strong><br>4 follow-ups over the first week (day 0, 2, 4, 7). First contact after enrollment.</span></div>
+      <div class="legend-item"><div class="legend-dot ld-2"></div><span><strong style="color:#fcd34d">Pos 6–21 &nbsp;·&nbsp; Bi-weekly</strong><br>Every 3–4 days for ~8 weeks. Nurture messages keeping the lead warm.</span></div>
+      <div class="legend-item"><div class="legend-dot ld-3"></div><span><strong style="color:#6ee7b7">Pos 22+ &nbsp;·&nbsp; Monthly</strong><br>One message per month, indefinitely. Long-term follow-up for slow-moving leads.</span></div>
+      <div class="legend-item"><div class="legend-dot ld-4"></div><span><strong style="color:#a5b4fc">Email hooks</strong><br>Parallel email track for contacts with a known email address.</span></div>
+    </div>
+  </div>
+
+  <div class="tab-row">
+    <button class="tab active" onclick="switchTab('pending',this)">Pending</button>
+    <button class="tab" onclick="switchTab('sent',this)">Sent</button>
+    <button class="tab" onclick="switchTab('skipped',this)">Skipped / Cancelled</button>
+  </div>
+
+  <div class="queue-summary" id="queue-summary"></div>
   <div id="followups-content"><div class="loading">Loading&hellip;</div></div>
+</div>
+
+<!-- ── Performance Stats ── -->
+<div class="panel">
+  <div class="panel-header"><div class="panel-title">Performance</div></div>
+  <p class="panel-desc">How the AI is performing across all enrolled contacts. The brain updates its analysis every 72 hours to improve future messages.</p>
+  <div id="brain-content"><div class="loading">Loading&hellip;</div></div>
 </div>
 
 <script>
 const ADMIN_KEY = ${JSON.stringify(adminKey)};
+let currentTab = 'pending';
+let allJobs = [];
+let contactMap = {};
 
-function fmtTime(ts) {
-  if (!ts) return '—';
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ── Format scheduled time (future-aware) ── */
+function fmtSendTime(ts) {
+  if (!ts) return { main:'—', sub:'' };
   const d = new Date(ts);
-  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const now = new Date();
+  const diffMs = ts - Date.now();
+  const diffMins = Math.round(diffMs / 60000);
+  const timeStr = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const dateStr = d.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+  const todayStr = now.toDateString();
+  const tomStr = new Date(now.getTime()+86400000).toDateString();
+  let main, sub;
+  if (d.toDateString() === todayStr) {
+    main = 'Today at ' + timeStr;
+    sub = diffMs > 0 ? 'in ' + (diffMins < 60 ? diffMins + 'm' : Math.round(diffMins/60) + 'h') : 'overdue';
+  } else if (d.toDateString() === tomStr) {
+    main = 'Tomorrow at ' + timeStr;
+    sub = 'in ~' + Math.round(diffMins/60) + 'h';
+  } else if (diffMs < 0) {
+    const ago = Math.abs(diffMins);
+    main = dateStr + ' ' + timeStr;
+    sub = ago < 60 ? ago+'m ago' : ago < 1440 ? Math.round(ago/60)+'h ago' : Math.round(ago/1440)+'d ago';
+  } else {
+    const days = Math.round(diffMs/86400000);
+    main = dateStr + ' at ' + timeStr;
+    sub = 'in ' + days + ' day' + (days===1?'':'s');
+  }
+  return { main, sub };
 }
 
 function fmtRelative(ts) {
@@ -1519,13 +1650,164 @@ function fmtRelative(ts) {
   if (mins < 60) return mins + 'm ago';
   const hrs = Math.round(mins / 60);
   if (hrs < 24) return hrs + 'h ago';
-  return Math.round(hrs / 24) + 'd ago';
+  return Math.round(hrs/24) + 'd ago';
 }
 
-function escHtml(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+/* ── Position → human label ── */
+function stageLabel(pos, type) {
+  const isEmail = (type||'').startsWith('email-');
+  const ch = isEmail ? 'Email' : 'SMS';
+  if (pos == null) return { label: ch + ' message', sub: '' };
+  pos = Number(pos);
+  if (isEmail) {
+    if (pos <= 5) return { label: ch + ' Hook ' + pos, sub: 'First-week email' };
+    if (pos <= 21) return { label: ch + ' Nurture #' + (pos-5), sub: 'Bi-weekly email' };
+    return { label: ch + ' Monthly #' + (pos-21), sub: 'Long-term nurture' };
+  }
+  if (pos <= 1) return { label: 'Initial message', sub: 'First contact' };
+  if (pos <= 5) return { label: 'Hook ' + (pos-1) + ' of 4', sub: 'Week 1 follow-up' };
+  if (pos <= 21) return { label: 'Bi-weekly #' + (pos-5), sub: 'Weeks 2–10' };
+  return { label: 'Monthly #' + (pos-21), sub: 'Long-term nurture' };
 }
 
+function contactCell(contactId) {
+  const c = contactMap[contactId];
+  if (!c) return '<span style="color:#444;font-size:12px">' + escHtml(contactId.slice(0,12)) + '…</span>';
+  const name = escHtml(c.firstName || '—');
+  const loc = escHtml(c.practiceName || c.city || '');
+  return \`<div class="name-cell">\${name}</div>\${loc ? '<div class="city-cell">'+loc+'</div>' : ''}\`;
+}
+
+function channelBadge(type) {
+  if ((type||'').startsWith('email-')) return '<span class="badge b-email">Email</span>';
+  return '<span class="badge b-sms">SMS</span>';
+}
+
+function statusBadge(s) {
+  const map = { pending:'b-pending', sent:'b-sent', skipped:'b-skipped', cancelled:'b-cancelled' };
+  const labels = { pending:'Pending', sent:'Sent', skipped:'Skipped', cancelled:'Cancelled' };
+  return \`<span class="badge \${map[s]||'b-skipped'}">\${labels[s]||escHtml(s)}</span>\`;
+}
+
+/* ── Render queue table ── */
+function renderQueue() {
+  const el = document.getElementById('followups-content');
+  const sumEl = document.getElementById('queue-summary');
+
+  const filtered = allJobs.filter(j => {
+    if (currentTab === 'pending') return j.status === 'pending';
+    if (currentTab === 'sent') return j.status === 'sent';
+    return j.status === 'skipped' || j.status === 'cancelled';
+  });
+
+  // Summary
+  if (currentTab === 'pending') {
+    const now = Date.now();
+    const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+    const today = filtered.filter(j => j.sendAt && j.sendAt <= todayEnd.getTime()).length;
+    const overdue = filtered.filter(j => j.sendAt && j.sendAt < now).length;
+    sumEl.innerHTML = \`
+      <div class="qs-item"><strong>\${filtered.length}</strong> total pending</div>
+      \${today > 0 ? '<div class="qs-item urgent"><strong>'+today+'</strong> sending today</div>' : ''}
+      \${overdue > 0 ? '<div class="qs-item" style="color:#ef4444"><strong>'+overdue+'</strong> overdue</div>' : ''}
+    \`;
+  } else {
+    sumEl.innerHTML = '';
+  }
+
+  if (filtered.length === 0) {
+    el.innerHTML = '<div class="empty">No ' + currentTab + ' messages.</div>';
+    return;
+  }
+
+  if (currentTab === 'pending') {
+    el.innerHTML = \`<table>
+      <thead><tr>
+        <th>Contact</th>
+        <th>Channel</th>
+        <th>Sequence Stage</th>
+        <th>Sends At</th>
+      </tr></thead>
+      <tbody>\${filtered.map(j => {
+        const { main, sub } = fmtSendTime(j.sendAt);
+        const { label, sub: stageSub } = stageLabel(j.position, j.type);
+        const isToday = main.startsWith('Today');
+        const isOverdue = sub === 'overdue';
+        return \`<tr>
+          <td>\${contactCell(j.contactId)}</td>
+          <td>\${channelBadge(j.type)}</td>
+          <td><span class="stage-label">\${escHtml(label)}</span><span class="stage-sub">\${escHtml(stageSub)}</span></td>
+          <td>
+            <div class="time-cell" style="\${isOverdue?'color:#ef4444':isToday?'color:#f59e0b':''}">\${escHtml(main)}</div>
+            <div class="time-sub">\${escHtml(sub)}</div>
+          </td>
+        </tr>\`;
+      }).join('')}</tbody>
+    </table>\`;
+  } else {
+    el.innerHTML = \`<table>
+      <thead><tr>
+        <th>Contact</th>
+        <th>Channel</th>
+        <th>Sequence Stage</th>
+        <th>Status</th>
+        <th>When</th>
+      </tr></thead>
+      <tbody>\${filtered.map(j => {
+        const ts = j.sentAt || j.createdAt;
+        const { label, sub: stageSub } = stageLabel(j.position, j.type);
+        return \`<tr>
+          <td>\${contactCell(j.contactId)}</td>
+          <td>\${channelBadge(j.type)}</td>
+          <td><span class="stage-label">\${escHtml(label)}</span><span class="stage-sub">\${escHtml(stageSub)}</span></td>
+          <td>\${statusBadge(j.status)}</td>
+          <td style="color:#555;font-size:12px">\${fmtRelative(ts)}</td>
+        </tr>\`;
+      }).join('')}</tbody>
+    </table>\`;
+  }
+}
+
+function switchTab(tab, btn) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  renderQueue();
+}
+
+/* ── Load follow-up queue + contacts ── */
+async function loadFollowups() {
+  try {
+    const [jobsRes, contactsRes, sentRes] = await Promise.all([
+      fetch('/api/followups?status=pending', { headers: { 'x-admin-key': ADMIN_KEY } }),
+      fetch('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } }),
+      fetch('/api/followups?status=sent', { headers: { 'x-admin-key': ADMIN_KEY } })
+    ]);
+    if (!jobsRes.ok) throw new Error('Queue load failed');
+    const pending = await jobsRes.json();
+    const sent = sentRes.ok ? await sentRes.json() : [];
+    allJobs = [...pending, ...sent,
+      ...(await (await fetch('/api/followups?status=skipped', {headers:{'x-admin-key':ADMIN_KEY}})).json().catch(()=>[])),
+      ...(await (await fetch('/api/followups?status=cancelled', {headers:{'x-admin-key':ADMIN_KEY}})).json().catch(()=>[]))
+    ];
+    if (contactsRes.ok) {
+      const contacts = await contactsRes.json();
+      contactMap = {};
+      contacts.forEach(c => { contactMap[c.contactId] = c; });
+    }
+    // Update queue stat cards
+    const now = Date.now();
+    const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+    document.getElementById('s-queued').textContent = pending.length;
+    document.getElementById('s-today').textContent = pending.filter(j => j.sendAt && j.sendAt <= todayEnd.getTime()).length;
+    document.getElementById('s-sent').textContent = sent.length;
+    renderQueue();
+  } catch (err) {
+    document.getElementById('followups-content').innerHTML = '<div class="empty">Failed to load queue: ' + escHtml(err.message) + '</div>';
+  }
+}
+
+/* ── Load brain / performance ── */
 async function loadBrain() {
   const el = document.getElementById('brain-content');
   try {
@@ -1536,146 +1818,51 @@ async function loadBrain() {
     const replyRate = t.outbound > 0 ? Math.round((t.inbound / t.outbound) * 100) : 0;
     const bookedRate = t.contacts > 0 ? Math.round((t.booked / t.contacts) * 100) : 0;
 
-    let stageRows = '';
+    // Update stat cards
+    document.getElementById('s-reply').textContent = replyRate + '%';
+    document.getElementById('s-booked').textContent = t.booked || 0;
+
+    function rateClass(r) { return r >= 30 ? 'rate-good' : r >= 10 ? 'rate-mid' : 'rate-low'; }
+
     const stages = Object.entries(data.byStage || {});
-    if (stages.length > 0) {
-      stageRows = \`<table style="margin-top:20px">
+    const stageHtml = stages.length > 0 ? \`
+      <table class="perf-table" style="margin-top:20px">
         <thead><tr>
-          <th>Stage</th><th>Sent</th><th>Replied</th><th>Reply Rate</th><th>Booked</th>
+          <th>Sequence Stage</th><th>Sent</th><th>Replied</th><th>Reply Rate</th><th>Booked</th>
         </tr></thead>
         <tbody>\${stages.map(([stage, s]) => {
           const rate = s.sent > 0 ? Math.round((s.replied / s.sent) * 100) : 0;
-          return \`<tr class="stage-row">
-            <td>\${escHtml(stage)}</td>
-            <td>\${s.sent}</td>
-            <td>\${s.replied}</td>
-            <td><span class="reply-rate">\${rate}%</span></td>
-            <td>\${s.booked}</td>
+          return \`<tr>
+            <td>\${escHtml(stage)}</td><td>\${s.sent}</td><td>\${s.replied}</td>
+            <td><span class="\${rateClass(rate)}">\${rate}%</span></td><td>\${s.booked}</td>
           </tr>\`;
         }).join('')}</tbody>
-      </table>\`;
-    }
+      </table>\` : '';
 
     el.innerHTML = \`
-      <div class="stat-grid">
-        <div class="stat-box"><div class="val">\${t.outbound || 0}</div><div class="lbl">Messages Sent</div></div>
-        <div class="stat-box"><div class="val">\${t.inbound || 0}</div><div class="lbl">Replies In</div></div>
-        <div class="stat-box"><div class="val">\${replyRate}%</div><div class="lbl">Reply Rate</div></div>
-        <div class="stat-box"><div class="val">\${t.contacts || 0}</div><div class="lbl">Contacts</div></div>
-        <div class="stat-box"><div class="val">\${t.booked || 0}</div><div class="lbl">Booked</div></div>
-        <div class="stat-box"><div class="val">\${bookedRate}%</div><div class="lbl">Book Rate</div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px">
+        <div class="stat-card"><div class="val">\${t.contacts || 0}</div><div class="lbl">Enrolled</div><div class="sub">contacts in AI sequence</div></div>
+        <div class="stat-card"><div class="val">\${t.outbound || 0}</div><div class="lbl">Sent</div><div class="sub">total outbound SMS/email</div></div>
+        <div class="stat-card"><div class="val">\${t.inbound || 0}</div><div class="lbl">Replied</div><div class="sub">inbound responses</div></div>
+        <div class="stat-card stat-highlight"><div class="val">\${replyRate}%</div><div class="lbl">Reply Rate</div><div class="sub">replies ÷ messages sent</div></div>
+        <div class="stat-card"><div class="val" style="color:#4ade80">\${t.booked || 0}</div><div class="lbl">Booked</div><div class="sub">zoom calls confirmed</div></div>
+        <div class="stat-card"><div class="val" style="color:#4ade80">\${bookedRate}%</div><div class="lbl">Booking Rate</div><div class="sub">booked ÷ enrolled</div></div>
       </div>
-      \${stageRows}
+      \${stageHtml}
     \`;
   } catch (err) {
     el.innerHTML = '<div class="empty">Failed to load: ' + escHtml(err.message) + '</div>';
   }
 }
 
-async function loadContacts() {
-  const el = document.getElementById('contacts-content');
-  try {
-    const res = await fetch('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } });
-    if (!res.ok) throw new Error(res.statusText);
-    const list = await res.json();
-    if (list.length === 0) {
-      el.innerHTML = '<div class="empty">No contacts yet.</div>';
-      return;
-    }
-    el.innerHTML = \`<table>
-      <thead><tr>
-        <th>Name</th><th>Practice</th><th>Step</th><th>Status</th><th>Messages</th><th>Last Activity</th>
-      </tr></thead>
-      <tbody>\${list.map(c => {
-        const status = c.booked
-          ? '<span class="badge badge-booked">Booked</span>'
-          : '<span class="badge badge-active">Active</span>';
-        return \`<tr>
-          <td>\${escHtml(c.firstName || '—')}</td>
-          <td>\${escHtml(c.practiceName || c.city || '—')}</td>
-          <td>\${c.currentStep != null ? c.currentStep : '—'}</td>
-          <td>\${status}</td>
-          <td>\${c.exchangeCount || 0}</td>
-          <td title="\${fmtTime(c.lastMessageAt)}">\${fmtRelative(c.lastMessageAt)}</td>
-        </tr>\`;
-      }).join('')}</tbody>
-    </table>\`;
-  } catch (err) {
-    el.innerHTML = '<div class="empty">Failed to load: ' + escHtml(err.message) + '</div>';
-  }
-}
-
-async function loadFollowups() {
-  const el = document.getElementById('followups-content');
-  try {
-    const [jobsRes, contactsRes] = await Promise.all([
-      fetch('/api/followups', { headers: { 'x-admin-key': ADMIN_KEY } }),
-      fetch('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } })
-    ]);
-    if (!jobsRes.ok) throw new Error(jobsRes.statusText);
-    const jobs = await jobsRes.json();
-    const contactMap = {};
-    if (contactsRes.ok) {
-      const contacts = await contactsRes.json();
-      contacts.forEach(c => { contactMap[c.contactId] = c; });
-    }
-    if (jobs.length === 0) {
-      el.innerHTML = '<div class="empty">No follow-up jobs found.</div>';
-      return;
-    }
-
-    function contactName(contactId) {
-      const c = contactMap[contactId];
-      if (!c) return escHtml(contactId);
-      const name = [c.firstName, c.practiceName || c.city].filter(Boolean).join(' — ');
-      return \`<span title="\${escHtml(contactId)}">\${escHtml(name || contactId)}</span>\`;
-    }
-
-    function statusBadge(s) {
-      const map = { pending:'badge-pending', sent:'badge-sent', skipped:'badge-skipped', cancelled:'badge-cancelled' };
-      return \`<span class="badge \${map[s] || 'badge-skipped'}">\${escHtml(s)}</span>\`;
-    }
-
-    function channelBadge(type) {
-      if ((type || '').startsWith('email-')) return '<span class="badge" style="background:#1a3a2a;color:#34d399;border:1px solid #166534">Email</span>';
-      return '<span class="badge" style="background:#1a2a3a;color:#60a5fa;border:1px solid #1e40af">SMS</span>';
-    }
-
-    el.innerHTML = \`<table>
-      <thead><tr>
-        <th>Contact</th><th>Channel</th><th>Type</th><th>Position</th><th>Status</th><th>Scheduled</th><th>Created</th>
-      </tr></thead>
-      <tbody>\${jobs.map(j => \`<tr>
-        <td>\${contactName(j.contactId)}</td>
-        <td>\${channelBadge(j.type)}</td>
-        <td>\${escHtml(j.type || '—')}</td>
-        <td>\${j.position != null ? j.position : '—'}</td>
-        <td>\${statusBadge(j.status)}</td>
-        <td title="\${fmtTime(j.sendAt)}">\${fmtRelative(j.sendAt)}</td>
-        <td title="\${fmtTime(j.createdAt)}">\${fmtRelative(j.createdAt)}</td>
-      </tr>\`).join('')}</tbody>
-    </table>\`;
-  } catch (err) {
-    el.innerHTML = '<div class="empty">Failed to load: ' + escHtml(err.message) + '</div>';
-  }
-}
-
-function loadAll() {
-  loadBrain();
-  loadContacts();
-  loadFollowups();
-}
-
+function loadAll() { loadFollowups(); loadBrain(); }
 loadAll();
 
 let secondsLeft = 30;
 setInterval(() => {
   secondsLeft--;
   document.getElementById('countdown').textContent = secondsLeft;
-  if (secondsLeft <= 0) {
-    secondsLeft = 30;
-    loadAll();
-  }
+  if (secondsLeft <= 0) { secondsLeft = 30; loadAll(); }
 }, 1000);
 </script>
 </body>
