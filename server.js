@@ -37,11 +37,23 @@ const jobQueue = [];
 let processing = false;
 
 // ─── Step-3 Auto-Send Tracker ─────────────────────────────────────────────────
-// When PRACTICE_DETECTED fires, a bridge message is sent and Step 3 is queued.
-// Instead of a fixed delay, we poll until research completes (or 90 s timeout)
-// so the AI always has research data available when the prospect replies to Step 3.
+// When PRACTICE_DETECTED fires, the "Pulling up your listing" bridge is sent and
+// the Step 3 message is queued. Instead of a fixed delay, we poll until research
+// completes (or 90 s timeout) so the AI always has research data when they reply.
 // After Step 3 is sent, a second watcher fires the scan-visibility follow-up
 // once the map scan completes — but only if the prospect hasn't replied yet.
+//
+// Conversation order (post-reorder):
+//   Step 1  → Google Maps awareness question
+//   Step 1b → Collect practice name + street
+//   Step 2  → Bridge "Pulling up your listing now" + [PRACTICE_DETECTED:…]
+//   Step 3  → (auto-sent below) Hearing aid conversion question — asked while
+//             research loads so there's no awkward silence. AI then has both
+//             the maps data AND the hearing aid context for the Step 4 reveal.
+//   Step 4  → AI-generated: full data reveal (maps + competitors) + dormant
+//             patients + expiring benefits + gap stack + booking ask
+//   Step 5  → Sid intro / scheduling
+//   Booked  → Confirmation
 const pendingStep3   = new Map(); // contactId → setInterval handle (research poller)
 const pendingScanWatch = new Map(); // contactId → setInterval handle (scan watcher)
 
@@ -50,7 +62,7 @@ const STEP3_TIMEOUT_MS = 90 * 1000;
 const SCAN_POLL_MS     = 2 * 1000;
 const SCAN_TIMEOUT_MS  = 90 * 1000;
 
-const STEP3_TEXT = 'Now think about this — you\'ve got patients you haven\'t seen in 2+ years. Their hearing has gotten worse. Their benefits have reset. They\'re not coming back on their own. What are you doing to bring them back in before they end up at the practice down the road?';
+const STEP3_TEXT = 'And one more thing while I\'m pulling that up — of the patients you\'ve recommended hearing aids to in the last couple years, what percentage actually went through with it?';
 
 function scheduleStep3AutoSend(contactId, resolvedConvId, skipReplyGuard = false) {
   clearPendingStep3(contactId);
