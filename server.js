@@ -495,7 +495,7 @@ async function handleConfirmationReply(contactId, messageBody, contact, resolved
 
   if (isNo) {
     conversations.update(contactId, { confirmationPending: null, awaitingRetryName: true });
-    const clarification = "No problem — what's the name exactly as it appears on Google Maps?";
+    const clarification = "No problem — what's the exact name as it appears on Google Maps, and what street is it on?";
     await ghl.sendMessage(contactId, clarification);
     conversations.addExchange(contactId, { direction: 'outbound', body: clarification, step: 3, conversationId: resolvedConvId || null });
     brain.recordOutbound(contactId, clarification, 3);
@@ -513,13 +513,15 @@ async function handleConfirmationReply(contactId, messageBody, contact, resolved
 
 async function handleRetryName(contactId, messageBody, contact, resolvedConvId) {
   const city = contact.practiceCity || contact.city || '';
-  const newName = messageBody.trim();
-  conversations.update(contactId, { awaitingRetryName: false, practiceName: newName });
+  // Use the full reply as the search query — prospect may give "Name on Street" or just a name
+  const retryInput = messageBody.trim();
+  conversations.update(contactId, { awaitingRetryName: false, practiceName: retryInput });
 
   const apiKey = process.env.GOOGLE_PLACES_KEY;
   if (apiKey) {
     try {
-      const searchQuery = [newName, city].filter(Boolean).join(' ');
+      // Include city; let Google Places parse out name vs street from the natural reply
+      const searchQuery = [retryInput, city].filter(Boolean).join(' ');
       const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&key=${apiKey}`;
       const placesRes = await fetch(placesUrl);
       const placesData = await placesRes.json();
