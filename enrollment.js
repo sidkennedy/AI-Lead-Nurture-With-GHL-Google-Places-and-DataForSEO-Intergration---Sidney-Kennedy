@@ -254,7 +254,7 @@ function formatExchanges(ghlMessages, convId) {
  * @param {number}  opts.delayMs  - Pause between contacts in execute mode (default: 2000)
  * @returns {Promise<{ stats, rows }>}
  */
-async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } = {}) {
+async function runEnrollment({ tag = '', dryRun = true, delayMs = 2000, signal } = {}) {
   const missingEnv = [];
   if (!process.env.GHL_API_KEY)     missingEnv.push('GHL_API_KEY');
   if (!process.env.GHL_LOCATION_ID) missingEnv.push('GHL_LOCATION_ID');
@@ -262,7 +262,7 @@ async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } 
     throw new Error(`Missing required environment variable(s): ${missingEnv.join(', ')}`);
   }
 
-  const { contacts: ghlContacts, totalScanned } = await ghl.fetchContactsByTag(tag);
+  const { contacts: ghlContacts, totalScanned } = await ghl.fetchContactsByTag(tag, signal);
 
   const stats = { total: ghlContacts.length, scanned: totalScanned, enrolled: 0, skipped: 0, errors: 0 };
   const rows  = [];

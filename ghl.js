@@ -91,58 +91,72 @@ async function getOrCreateConversation(contactId) {
   }
 }
 
-async function fetchContactsByTag(tag) {
+// Helper: format a GHL error response into a user-friendly message
+function formatGhlError(status) {
+  if (status === 429) return 'GHL is rate-limiting us (429 Too Many Requests). Wait 60 seconds and try again.';
+  if (status === 401) return 'GHL authentication failed (401). Your GHL_API_KEY is invalid or expired.';
+  if (status === 403) return 'GHL permission denied (403). Your API key does not have access to this location.';
+  if (status === 404) return 'GHL location not found (404). Check your GHL_LOCATION_ID.';
+  return `GHL API error ${status}. Check GHL_API_KEY and GHL_LOCATION_ID, or try again in a moment.`;
+}
+
+async function fetchContactsByTag(tag, signal) {
   const tagLower = tag.toLowerCase();
   const matched = [];
-  const limit = 100;
-  let startAfterId = null;
   let totalScanned = 0;
+  const locationId = process.env.GHL_LOCATION_ID || '';
 
-  // Helper: format a GHL error response into a user-friendly message
-  function formatGhlError(status) {
-    if (status === 429) return 'GHL is rate-limiting us (429 Too Many Requests). Wait 60 seconds and try again. If this keeps happening, your GHL plan may have a low API quota.';
-    if (status === 401) return 'GHL authentication failed (401). Your GHL_API_KEY is invalid or expired.';
-    if (status === 403) return 'GHL permission denied (403). Your API key does not have access to this location.';
-    if (status === 404) return 'GHL location not found (404). Check your GHL_LOCATION_ID.';
-    return `GHL API error ${status}. Check GHL_API_KEY and GHL_LOCATION_ID, or try again in a moment.`;
+  // Try GHL's server-side tag search first (POST /contacts/search).
+  // This is much faster than paginating all contacts — only returns matching ones.
+  try {
+    const searchRes = await fetch(`${BASE}/contacts/search?locationId=${encodeURIComponent(locationId)}`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        filters: [{ field: 'tags', operator: 'CONTAINS_ANY', value: [tag] }],
+        limit: 200,
+        locationId
+      }),
+      signal
+    });
+    if (searchRes.ok) {
+      const data = await searchRes.json();
+      const contacts = data.contacts || data.data || [];
+      console.log(`[GHL] fetchContactsByTag("${tag}"): search API returned ${contacts.length} contacts`);
+      return { contacts, totalScanned: contacts.length };
+    }
+    console.warn(`[GHL] Tag search API returned ${searchRes.status} — falling back to full scan`);
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    console.warn(`[GHL] Tag search API failed (${err.message}) — falling back to full scan`);
   }
 
-  // GHL doesn't support server-side tag filtering on the contacts list endpoint.
-  // Paginate through all contacts using cursor-based pagination and filter locally.
-  // 429 (rate limit) is retried with exponential backoff up to 3 times before giving up.
+  // Fallback: paginate all contacts and filter locally.
+  // 429s are retried once (2s wait) before failing so we don't exceed the request timeout.
+  const limit = 100;
+  let startAfterId = null;
   while (true) {
-    const params = new URLSearchParams({
-      locationId: process.env.GHL_LOCATION_ID || '',
-      limit: String(limit)
-    });
+    if (signal?.aborted) throw Object.assign(new Error('AbortError'), { name: 'AbortError' });
+    const params = new URLSearchParams({ locationId, limit: String(limit) });
     if (startAfterId) params.set('startAfterId', startAfterId);
 
-    let res;
-    let attempt = 0;
-    const maxAttempts = 4; // initial + 3 retries
-    while (true) {
-      res = await fetch(`${BASE}/contacts/?${params.toString()}`, { headers: headers() });
-      if (res.status !== 429 || attempt >= maxAttempts - 1) break;
-      const waitMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
-      console.warn(`[GHL] 429 received — backing off ${waitMs}ms (attempt ${attempt + 1}/${maxAttempts - 1})`);
-      await new Promise(r => setTimeout(r, waitMs));
-      attempt++;
+    let res = await fetch(`${BASE}/contacts/?${params.toString()}`, { headers: headers(), signal });
+    if (res.status === 429) {
+      console.warn('[GHL] 429 on full scan — backing off 2s');
+      await new Promise(r => setTimeout(r, 2000));
+      res = await fetch(`${BASE}/contacts/?${params.toString()}`, { headers: headers(), signal });
     }
-
     if (!res.ok) throw new Error(formatGhlError(res.status));
     const data = await res.json();
 
     const batch = data.contacts || [];
     totalScanned += batch.length;
-
     for (const c of batch) {
       const contactTags = (c.tags || []).map(t =>
         (typeof t === 'string' ? t : (t.name || t.tag || '')).toLowerCase()
       );
       if (contactTags.includes(tagLower)) matched.push(c);
     }
-
-    // GHL cursor: use the last contact's id as startAfterId for the next page
     if (batch.length < limit) break;
     startAfterId = batch[batch.length - 1].id;
   }

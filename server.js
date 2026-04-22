@@ -1280,11 +1280,23 @@ app.post('/api/enroll/run', requireAdmin, async (req, res) => {
   const tag    = typeof req.body.tag === 'string' && req.body.tag.trim() ? req.body.tag.trim() : '';
   if (!tag) return res.status(400).json({ ok: false, error: 'Tag is required.' });
   const dryRun = req.body.dryRun !== false && req.body.dryRun !== 'false';
+
+  // Hard 25-second timeout — Replit's proxy kills connections after ~30s.
+  // The AbortController signal is passed into the GHL fetch loop so it cancels cleanly.
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), 25000);
+
   try {
-    const result = await runEnrollment({ tag, dryRun, delayMs: 1500 });
+    const result = await runEnrollment({ tag, dryRun, delayMs: 1500, signal: controller.signal });
+    clearTimeout(timeoutId);
     res.json({ ok: true, ...result });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    clearTimeout(timeoutId);
+    const isTimeout = err.name === 'AbortError' || controller.signal.aborted;
+    const message   = isTimeout
+      ? 'Scan timed out (25s). GHL has too many contacts to scan in time — the tag search API may not be available on your plan. Try again; if it keeps failing contact support.'
+      : err.message;
+    if (!res.headersSent) res.status(isTimeout ? 504 : 500).json({ ok: false, error: message });
   }
 });
 
@@ -1734,7 +1746,7 @@ textarea:focus{border-color:#4263eb}
   <h1>Prompt Editor</h1>
   <p class="subtitle">View and edit every AI prompt. Changes take effect immediately — no restart needed.</p>
   <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
-    BUILD v4 (click-fix) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+    BUILD v5 (fast-search) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
   </div>
 </div>
 <div id="prompts"></div>
@@ -1944,7 +1956,7 @@ tr:last-child td{border-bottom:none}
   <h1>Lead Enrollment</h1>
   <p class="subtitle">Preview and enroll GHL contacts into the follow-up sequence.<br>Run a dry-run first to see what will happen, then click Run Enrollment to commit.</p>
   <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
-    BUILD v4 (click-fix) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+    BUILD v5 (fast-search) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
   </div>
 </div>
 
