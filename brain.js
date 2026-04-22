@@ -318,14 +318,28 @@ function runAnalysis() {
     // Rank patterns per stage and take top 3
     const channelWinning = {};
     for (const [stage, patterns] of Object.entries(grouped)) {
+      // Email needs more sends before a pattern is worth ranking (higher noise floor)
+      const minSends = channel === 'email' ? 5 : 2;
+
       const ranked = Object.values(patterns)
-        .filter(p => p.count >= 2) // need at least 2 sends to be meaningful
+        .filter(p => p.count >= minSends)
         .map(p => ({
           ...p,
-          replyRate:        p.count > 0 ? Math.round((p.replies  / p.count) * 100) : 0,
-          bookingRate:      p.count > 0 ? Math.round((p.bookings / p.count) * 100) : 0,
-          sample_size:      p.count,
-          confidence_level: p.count >= 50 ? 'high' : p.count >= 20 ? 'medium' : 'low'
+          replyRate:   p.count > 0 ? Math.round((p.replies  / p.count) * 100) : 0,
+          bookingRate: p.count > 0 ? Math.round((p.bookings / p.count) * 100) : 0,
+          sample_size: p.count,
+          reply_count: p.replies,
+          // Email: confidence is based on actual reply count (reply signal matters more than volume)
+          //   low    = fewer than 10 replies  → still testing, don't inject
+          //   medium = 10–29 replies          → promising, lean toward it
+          //   high   = 30+ replies            → strong signal, default to this
+          // SMS: confidence based on send count (volume is the signal)
+          //   low    = <20 sends
+          //   medium = 20–49 sends
+          //   high   = 50+ sends
+          confidence_level: channel === 'email'
+            ? (p.replies >= 30 ? 'high' : p.replies >= 10 ? 'medium' : 'low')
+            : (p.count   >= 50 ? 'high' : p.count   >= 20 ? 'medium' : 'low')
         }))
         .sort((a, b) => b.replyRate - a.replyRate || b.bookingRate - a.bookingRate)
         .slice(0, 3);

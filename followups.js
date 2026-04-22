@@ -708,12 +708,35 @@ async function generateEmailMessage(contact, position, jobType, contactId) {
 
   const practiceName = contact.practiceName ? ` at ${contact.practiceName}` : '';
 
-  // Inject email-specific winning patterns from the learning brain
+  // Inject email-specific winning patterns from the learning brain.
+  // Confidence is reply-based: low (<10 replies) = don't inject, still testing.
+  // Medium (10–29 replies) = promising, lean toward it.
+  // High (30+ replies) = strong signal, Claude should default to this style.
   const stage = brain.classifyStage(contact.currentStep ?? null);
-  const emailPatterns = brain.getWinningPatterns(stage, 'email');
-  const winningPatterns = (emailPatterns && emailPatterns.length > 0)
-    ? `Email subject lines and openers that have generated replies: ${emailPatterns.slice(0, 2).map(p => `"${(p.example || '').slice(0, 80)}"`).join(' | ')}. Lean toward similar energy.`
-    : '';
+  const emailPatterns = brain.getWinningPatterns(stage, 'email') || [];
+  const actionable = emailPatterns.filter(p =>
+    p.confidence_level === 'high' || p.confidence_level === 'medium'
+  );
+
+  let winningPatterns = '';
+  if (actionable.length > 0) {
+    const high = actionable.filter(p => p.confidence_level === 'high');
+    const medium = actionable.filter(p => p.confidence_level === 'medium');
+
+    if (high.length > 0) {
+      const examples = high.slice(0, 2).map(p =>
+        `"${(p.example || '').slice(0, 80)}" (${p.replyRate}% reply rate across ${p.reply_count} replies / ${p.sample_size} sent)`
+      ).join('\n');
+      winningPatterns = `STRONG SIGNAL — these email styles are consistently generating replies at scale. Default to this energy and structure unless the conversation context gives you a specific reason to diverge:\n${examples}`;
+    } else if (medium.length > 0) {
+      const examples = medium.slice(0, 2).map(p =>
+        `"${(p.example || '').slice(0, 80)}" (${p.replyRate}% reply rate, ${p.reply_count} replies so far — still building data)`
+      ).join('\n');
+      winningPatterns = `Patterns showing early promise — lean toward this energy while we keep testing:\n${examples}`;
+    }
+  }
+  // If no actionable patterns: winningPatterns stays '' and {{winningPatterns}}
+  // renders as nothing — Claude keeps exploring freely until data is sufficient.
 
   const userPrompt = interpolate(rawTemplate, {
     firstName: contact.firstName || 'there',
