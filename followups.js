@@ -222,6 +222,27 @@ function cancelContactJobs(contactId) {
   return count;
 }
 
+function cancelEmailJobs(contactId) {
+  const jobs = load();
+  let count = 0;
+  const updated = jobs.map(j => {
+    if (
+      j.contactId === contactId &&
+      j.status === 'pending' &&
+      j.type.startsWith('email-')
+    ) {
+      count++;
+      return { ...j, status: 'cancelled' };
+    }
+    return j;
+  });
+  if (count > 0) {
+    save(updated);
+    console.log(`[Followups] Cancelled ${count} pending email jobs for ${contactId} (Disable AI tag)`);
+  }
+  return count;
+}
+
 function getDueJobs() {
   const now = Date.now();
   return load().filter(j => j.status === 'pending' && j.sendAt <= now);
@@ -903,6 +924,7 @@ module.exports = {
   startScheduler,
   scheduleSilenceCheck,
   cancelContactJobs,
+  cancelEmailJobs,
   getDueJobs,
   getContactJobs,
   getAllJobs,

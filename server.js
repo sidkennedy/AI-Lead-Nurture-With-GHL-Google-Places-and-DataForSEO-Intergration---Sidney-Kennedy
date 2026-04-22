@@ -342,6 +342,74 @@ app.post('/webhooks/ghl/enrolled', async (req, res) => {
   console.log(`[Enrolled] Contact ${contactId} enrolled — silence check + email queued`);
 });
 
+// ─── GHL Contact-Updated Webhook ──────────────────────────────────────────────
+// Fires when GHL updates a contact (e.g. a tag is added). When the "Disable AI"
+// tag is detected, all pending email jobs are cancelled immediately so no further
+// emails go out — even if jobs were already queued. The local contact record is
+// also updated with the latest tags.
+
+app.post('/webhooks/ghl/contact-updated', async (req, res) => {
+  const adminKey = process.env.ADMIN_KEY;
+  const providedKey =
+    req.headers['x-admin-key'] ||
+    req.query.key ||
+    req.headers['x-ghl-signature'] ||
+    req.headers['x-api-key'] ||
+    req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
+    req.query.token ||
+    '';
+
+  const secret = process.env.GHL_WEBHOOK_SECRET;
+  const secretOk = secret  && providedKey === secret;
+  const adminOk  = adminKey && providedKey === adminKey;
+
+  if (!secretOk && !adminOk) {
+    console.warn('[ContactUpdated] Auth failed — missing or invalid credentials');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  res.json({ received: true });
+
+  const payload = req.body;
+
+  const contactId =
+    payload.contactId ||
+    payload.contact_id ||
+    payload.contact?.id;
+
+  if (!contactId) {
+    console.log('[ContactUpdated] Skipping — missing contactId');
+    return;
+  }
+
+  // Only parse tags if the payload actually contains a tags field.
+  // If tags are absent (e.g. a non-tag update), hasTags stays false and we
+  // skip overwriting the local record — preventing accidental tag erasure.
+  const rawTagsSource = payload.contact?.tags ?? payload.tags;
+  const hasTags = Array.isArray(rawTagsSource);
+  const tags = hasTags
+    ? rawTagsSource.map(t => (typeof t === 'string' ? t : (t.name || '')).toLowerCase())
+    : [];
+
+  console.log(`[ContactUpdated] Received for contact ${contactId} — tags present: ${hasTags}${hasTags ? `, [${tags.join(', ')}]` : ''}`);
+
+  // Update local contact record with the latest tags only when the payload
+  // explicitly included a tags array (avoid clearing tags on unrelated updates)
+  if (hasTags) {
+    const existing = conversations.get(contactId);
+    if (existing) {
+      conversations.update(contactId, { tags });
+      console.log(`[ContactUpdated] Updated tags on local record for ${contactId}`);
+    }
+  }
+
+  // If "Disable AI" tag is present, cancel all pending email jobs immediately
+  if (tags.includes('disable ai')) {
+    const cancelled = followups.cancelEmailJobs(contactId);
+    console.log(`[ContactUpdated] Disable AI tag detected for ${contactId} — cancelled ${cancelled} pending email job(s)`);
+  }
+});
+
 // ─── State Recovery from GHL History ─────────────────────────────────────────
 // Called when local state may be incomplete (e.g. server restart). Scans the
 // raw GHL message history and patches any missing flags back into the contact.
