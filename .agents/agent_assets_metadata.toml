@@ -6,3 +6,9 @@ id = "jLysTnNde7Rzt34GSVcJM"
 uri = "file://docs/app-documentation.md"
 type = "text"
 title = "Powered Up AI — Complete App Documentation"
+
+[[outputs]]
+id = "w7TdVRDPUX6zIyKmajv32"
+uri = "file://docs/plain-english-guide.md"
+type = "text"
+title = "Powered Up AI — Plain English Guide"
