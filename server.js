@@ -222,6 +222,13 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   const resolvedCity = ghlContact?.city || ghlContact?.address?.city || city || '';
   const resolvedPhone = ghlContact?.phone || phone || '';
 
+  // ── 1.5. Honour "Disable AI" tag — hard stop, no messages sent ───────────────
+  const contactTags = (ghlContact?.tags || []).map(t => t.toLowerCase());
+  if (contactTags.includes('disable ai')) {
+    console.log(`[Webhook] Contact ${contactId} has "Disable AI" tag — skipping all AI actions`);
+    return;
+  }
+
   // ── 2. Load / create local contact record ────────────────────────────────────
   conversations.ensureContact(contactId, {
     firstName: resolvedFirstName,
