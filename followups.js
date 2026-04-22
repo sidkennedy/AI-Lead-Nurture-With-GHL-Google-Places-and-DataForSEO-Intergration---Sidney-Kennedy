@@ -273,12 +273,12 @@ function scheduleNext(contactId, sentPosition, currentStep, lastBody, tz) {
 // ─── Hook 1 Static Send ───────────────────────────────────────────────────────
 
 /**
- * Send a plain static "Hi [firstName]" — no AI call, no template.
+ * Send a plain static "Hey [firstName], you there?" — no AI call, no template.
  * This fires 5 minutes after silence and is intentionally minimal.
  */
 async function sendHook1Static(job, contact) {
   const firstName = contact.firstName || '';
-  const hookText = firstName ? `Hi ${firstName}` : 'Hi there';
+  const hookText = firstName ? `Hey ${firstName}, you there?` : 'Hey, you there?';
 
   let sendResult;
   try {
