@@ -41,30 +41,11 @@ const MONTHLY_DAYS = 30;
 // ─── Timezone Estimation ──────────────────────────────────────────────────────
 
 /**
- * Estimate the prospect's IANA timezone from their city name.
- * Uses a simple keyword heuristic for US regions; defaults to EST.
- * This covers the most common cases without a full geolocation database.
+ * Always returns Eastern time (America/New_York).
+ * GHL does not reliably provide prospect timezone data, so EST is used
+ * as a fixed default for all send-window calculations.
  */
 function estimateTimezone(city) {
-  if (!city) return DEFAULT_TZ;
-  const c = city.toLowerCase();
-
-  // Pacific — CA, WA, OR, NV (major cities)
-  if (/\b(los angeles|san francisco|san diego|sacramento|fresno|san jose|oakland|berkeley|anaheim|riverside|long beach|santa ana|irvine|seattle|portland|spokane|tacoma|las vegas|reno|henderson)\b/.test(c)) {
-    return 'America/Los_Angeles';
-  }
-
-  // Mountain — CO, UT, ID, NM, MT, WY, AZ (most of AZ is no DST, but Denver is standard)
-  if (/\b(denver|colorado springs|aurora|boulder|salt lake city|provo|ogden|boise|albuquerque|tucson|phoenix|tempe|mesa|chandler|scottsdale|flagstaff|billings|casper|cheyenne)\b/.test(c)) {
-    return 'America/Denver';
-  }
-
-  // Central — TX, IL, MN, WI, MO, TN, LA, AR, OK, IA, KS, ND, SD, NE
-  if (/\b(chicago|houston|dallas|san antonio|austin|fort worth|el paso|memphis|nashville|new orleans|oklahoma city|tulsa|kansas city|wichita|omaha|minneapolis|saint paul|madison|milwaukee|st louis|little rock|baton rouge|jackson|des moines|sioux falls|fargo|bismarck)\b/.test(c)) {
-    return 'America/Chicago';
-  }
-
-  // Default: Eastern
   return DEFAULT_TZ;
 }
 
