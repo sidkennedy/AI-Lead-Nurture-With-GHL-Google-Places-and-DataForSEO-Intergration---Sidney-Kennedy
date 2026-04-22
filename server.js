@@ -43,20 +43,23 @@ const pendingStep3 = new Map(); // contactId → setTimeout handle
 const STEP3_DELAY_MS = 10 * 1000;
 const STEP3_TEXT = 'Now think about this — you\'ve got patients you haven\'t seen in 2+ years. Their hearing has gotten worse. Their benefits have reset. They\'re not coming back on their own. What are you doing to bring them back in before they end up at the practice down the road?';
 
-function scheduleStep3AutoSend(contactId, resolvedConvId) {
+function scheduleStep3AutoSend(contactId, resolvedConvId, skipReplyGuard = false) {
   clearPendingStep3(contactId);
   const handle = setTimeout(async () => {
     pendingStep3.delete(contactId);
     const contact = conversations.get(contactId);
     if (!contact || contact.booked) return;
 
-    // Cancel if prospect already replied after the bridge
-    const exch = contact.exchanges || [];
-    const lastOut = [...exch].reverse().find(e => e.direction === 'outbound');
-    const lastIn = [...exch].reverse().find(e => e.direction === 'inbound');
-    if (lastIn && lastOut && lastIn.timestamp > lastOut.timestamp) {
-      console.log(`[Step3Auto] ${contactId} already replied — skipping auto-send`);
-      return;
+    // Cancel if prospect already replied after the bridge — but skip this check
+    // when called from the confirmation flow (their last message WAS the confirmation)
+    if (!skipReplyGuard) {
+      const exch = contact.exchanges || [];
+      const lastOut = [...exch].reverse().find(e => e.direction === 'outbound');
+      const lastIn = [...exch].reverse().find(e => e.direction === 'inbound');
+      if (lastIn && lastOut && lastIn.timestamp > lastOut.timestamp) {
+        console.log(`[Step3Auto] ${contactId} already replied — skipping auto-send`);
+        return;
+      }
     }
 
     try {
@@ -525,7 +528,7 @@ async function handleConfirmationReply(contactId, messageBody, contact, resolved
   conversations.update(contactId, { confirmationPending: null });
   console.log(`[Webhook] Practice confirmed for ${contactId}: ${pending.name}`);
   startResearchAndScan(contactId, pending.name, contact.practiceStreet || '', pending.city, pending.placeId);
-  scheduleStep3AutoSend(contactId, resolvedConvId);
+  scheduleStep3AutoSend(contactId, resolvedConvId, true);
 }
 
 async function handleRetryName(contactId, messageBody, contact, resolvedConvId) {
@@ -565,7 +568,7 @@ async function handleRetryName(contactId, messageBody, contact, resolvedConvId) 
 
   // No result or no API key — proceed without confirmation
   startResearchAndScan(contactId, retryInput, '', city, null);
-  scheduleStep3AutoSend(contactId, resolvedConvId);
+  scheduleStep3AutoSend(contactId, resolvedConvId, true);
 }
 
 // ─── Message History Builders ─────────────────────────────────────────────────
