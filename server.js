@@ -403,10 +403,11 @@ app.post('/webhooks/ghl/contact-updated', async (req, res) => {
     }
   }
 
-  // If "Disable AI" tag is present, cancel all pending email jobs immediately
+  // If "Disable AI" tag is present, cancel all pending jobs (email + SMS) immediately
   if (tags.includes('disable ai')) {
-    const cancelled = followups.cancelEmailJobs(contactId);
-    console.log(`[ContactUpdated] Disable AI tag detected for ${contactId} — cancelled ${cancelled} pending email job(s)`);
+    const cancelledSms = followups.cancelContactJobs(contactId);
+    const cancelledEmail = followups.cancelEmailJobs(contactId);
+    console.log(`[ContactUpdated] Disable AI tag detected for ${contactId} — cancelled ${cancelledSms} SMS job(s) and ${cancelledEmail} email job(s)`);
   }
 });
 
