@@ -270,7 +270,8 @@ async function runEnrollment({ tag = '', dryRun = true, delayMs = 2000, signal }
   const DAY = 24 * 60 * 60 * 1000;
   const POSITION_DELAY = { 2: 0, 3: 2, 4: 4, 5: 7 };
 
-  for (const ghlContact of ghlContacts) {
+  // Process one contact — returns a row object.
+  async function processContact(ghlContact) {
     const contactId = ghlContact.id;
     const firstName = ghlContact.firstName || ghlContact.name || '—';
     const phone     = ghlContact.phone     || '—';
@@ -280,125 +281,99 @@ async function runEnrollment({ tag = '', dryRun = true, delayMs = 2000, signal }
       (typeof t === 'string' ? t : (t.name || '')).toLowerCase()
     );
 
-    const row = {
-      contactId, firstName, phone, city,
-      action: '', reason: '', position: null, step: null
-    };
+    const row = { contactId, firstName, phone, city, email, tags,
+                  action: '', reason: '', position: null, step: null };
 
-    try {
-      if (tags.some(t => t === 'disable ai')) {
-        row.action = 'SKIP';
-        row.reason = 'Has "Disable AI" tag';
-        stats.skipped++;
-        rows.push(row);
-        continue;
-      }
+    if (tags.some(t => t === 'disable ai')) {
+      return { ...row, action: 'SKIP', reason: 'Has "Disable AI" tag' };
+    }
+    const localContact = conversations.get(contactId);
+    if (localContact?.booked) {
+      return { ...row, action: 'SKIP', reason: 'Already booked' };
+    }
+    if (hasPendingJob(contactId)) {
+      return { ...row, action: 'SKIP', reason: 'Already has pending follow-up job' };
+    }
 
-      const localContact = conversations.get(contactId);
-      if (localContact?.booked) {
-        row.action = 'SKIP';
-        row.reason = 'Already booked';
-        stats.skipped++;
-        rows.push(row);
-        continue;
-      }
+    const convId      = await ghl.getOrCreateConversation(contactId);
+    const ghlMessages = convId ? await ghl.fetchMessages(convId) : [];
+    const realMessages = (ghlMessages || []).filter(isRealMessage);
+    const hasAnyInbound = realMessages.some(m => isInbound(m));
 
-      if (hasPendingJob(contactId)) {
-        row.action = 'SKIP';
-        row.reason = 'Already has pending follow-up job';
-        stats.skipped++;
-        rows.push(row);
-        continue;
-      }
-
-      const convId      = await ghl.getOrCreateConversation(contactId);
-      const ghlMessages = convId ? await ghl.fetchMessages(convId) : [];
-      const realMessages = (ghlMessages || []).filter(isRealMessage);
-      const hasAnyInbound = realMessages.some(m => isInbound(m));
-
-      let analysis;
-      if (hasAnyInbound) {
-        const claudeResult = await claudeAnalyseConversation(ghlMessages);
-        if (claudeResult) {
-          const heuristic = heuristicAnalysis(ghlMessages);
-          analysis = {
-            ...heuristic,
-            currentStep:    claudeResult.currentStep,
-            enrollPosition: claudeResult.enrollPosition,
-            reasoning:      `Claude: ${claudeResult.reasoning}`
-          };
-        } else {
-          analysis = heuristicAnalysis(ghlMessages);
-        }
+    let analysis;
+    // Dry-run: use fast heuristics only — Claude analysis only runs on real enrollment.
+    if (!dryRun && hasAnyInbound) {
+      const claudeResult = await claudeAnalyseConversation(ghlMessages);
+      if (claudeResult) {
+        analysis = {
+          ...heuristicAnalysis(ghlMessages),
+          currentStep:    claudeResult.currentStep,
+          enrollPosition: claudeResult.enrollPosition,
+          reasoning:      `Claude: ${claudeResult.reasoning}`
+        };
       } else {
         analysis = heuristicAnalysis(ghlMessages);
       }
-
-      const tz      = estimateTimezone(city);
-      const daysOut = POSITION_DELAY[analysis.enrollPosition] ?? (analysis.enrollPosition - 2);
-      const sendAt  = nextWindowMs(Date.now() + daysOut * DAY, tz);
-
-      row.position = analysis.enrollPosition;
-      row.step     = analysis.currentStep;
-      row.action   = 'ENROLL';
-      row.reason   = analysis.reasoning;
-
-      if (!dryRun) {
-        conversations.ensureContact(contactId, { firstName, city, phone, email, tags });
-
-        const fresh = conversations.get(contactId);
-        if (!fresh?.exchanges?.length && ghlMessages.length > 0) {
-          const exchanges = formatExchanges(ghlMessages, convId);
-          for (const ex of exchanges) {
-            conversations.addExchange(contactId, ex);
-          }
-        }
-
-        conversations.update(contactId, { currentStep: analysis.currentStep, email, tags });
-
-        scheduleJob({
-          contactId,
-          type:     'hook',
-          position: analysis.enrollPosition,
-          sendAt,
-          context: {
-            lastOutboundBody:   '',
-            lastOutboundStep:   analysis.currentStep,
-            timezone:           tz,
-            enrolledFromScript: true
-          }
-        });
-
-        // Schedule email-hook position 2 in parallel if the contact has an email
-        if (email && !tags.includes('disable ai')) {
-          const emailSendAt = nextEmailWindowMs(sendAt, tz);
-          const allJobs = loadFollowupJobs();
-          const hasPendingEmail = allJobs.some(
-            j => j.contactId === contactId && j.type.startsWith('email-') && j.status === 'pending'
-          );
-          if (!hasPendingEmail) {
-            scheduleJob({
-              contactId,
-              type:     'email-hook',
-              position: 2,
-              sendAt:   emailSendAt,
-              context:  { timezone: tz, enrolledFromScript: true }
-            });
-          }
-        }
-
-        await sleep(delayMs);
-      }
-
-      stats.enrolled++;
-
-    } catch (err) {
-      row.action = 'ERROR';
-      row.reason = err.message;
-      stats.errors++;
+    } else {
+      analysis = heuristicAnalysis(ghlMessages);
     }
 
-    rows.push(row);
+    const tz      = estimateTimezone(city);
+    const daysOut = POSITION_DELAY[analysis.enrollPosition] ?? (analysis.enrollPosition - 2);
+    const sendAt  = nextWindowMs(Date.now() + daysOut * DAY, tz);
+
+    row.position = analysis.enrollPosition;
+    row.step     = analysis.currentStep;
+    row.action   = 'ENROLL';
+    row.reason   = analysis.reasoning;
+    row._enroll  = dryRun ? null : { analysis, tz, sendAt, convId, ghlMessages };
+    return row;
+  }
+
+  // Run contacts in parallel batches of 5 — fast for dry runs, safe for real runs.
+  const BATCH = dryRun ? 5 : 1;
+  for (let i = 0; i < ghlContacts.length; i += BATCH) {
+    const batch = ghlContacts.slice(i, i + BATCH);
+    const results = await Promise.allSettled(batch.map(c => processContact(c)));
+    for (const r of results) {
+      const row = r.status === 'fulfilled'
+        ? r.value
+        : { action: 'ERROR', reason: r.reason?.message || 'Unknown error',
+            firstName: '—', phone: '—', city: '', position: null, step: null };
+
+      if (row.action === 'SKIP') stats.skipped++;
+      else if (row.action === 'ERROR') stats.errors++;
+      else {
+        stats.enrolled++;
+        // Write-through only on real enrollment
+        if (!dryRun && row._enroll) {
+          const { analysis, tz, sendAt, convId, ghlMessages } = row._enroll;
+          const { contactId, firstName, city, phone, email, tags } = row;
+          conversations.ensureContact(contactId, { firstName, city, phone, email, tags });
+          const fresh = conversations.get(contactId);
+          if (!fresh?.exchanges?.length && ghlMessages.length > 0) {
+            for (const ex of formatExchanges(ghlMessages, convId)) {
+              conversations.addExchange(contactId, ex);
+            }
+          }
+          conversations.update(contactId, { currentStep: analysis.currentStep, email, tags });
+          scheduleJob({ contactId, type: 'hook', position: analysis.enrollPosition, sendAt,
+            context: { lastOutboundBody: '', lastOutboundStep: analysis.currentStep,
+                       timezone: tz, enrolledFromScript: true } });
+          if (email && !tags.includes('disable ai')) {
+            const emailSendAt = nextEmailWindowMs(sendAt, tz);
+            const allJobs = loadFollowupJobs();
+            if (!allJobs.some(j => j.contactId === contactId && j.type.startsWith('email-') && j.status === 'pending')) {
+              scheduleJob({ contactId, type: 'email-hook', position: 2, sendAt: emailSendAt,
+                context: { timezone: tz, enrolledFromScript: true } });
+            }
+          }
+          await sleep(delayMs);
+        }
+      }
+      const { _enroll: _, ...cleanRow } = row;
+      rows.push(cleanRow);
+    }
   }
 
   return { stats, rows };

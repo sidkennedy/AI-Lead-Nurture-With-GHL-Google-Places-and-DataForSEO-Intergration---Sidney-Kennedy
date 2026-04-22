@@ -1764,7 +1764,7 @@ textarea:focus{border-color:#4263eb}
   <h1>Prompt Editor</h1>
   <p class="subtitle">View and edit every AI prompt. Changes take effect immediately — no restart needed.</p>
   <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
-    BUILD v7 (search-fixed) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+    BUILD v8 (fast-preview) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
   </div>
 </div>
 <div id="prompts"></div>
@@ -1974,7 +1974,7 @@ tr:last-child td{border-bottom:none}
   <h1>Lead Enrollment</h1>
   <p class="subtitle">Preview and enroll GHL contacts into the follow-up sequence.<br>Run a dry-run first to see what will happen, then click Run Enrollment to commit.</p>
   <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
-    BUILD v7 (search-fixed) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+    BUILD v8 (fast-preview) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
   </div>
 </div>
 
