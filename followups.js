@@ -8,7 +8,7 @@ const brain = require('./brain');
 
 const FILE = path.join(__dirname, 'data', 'followups.json');
 
-// Lazy-init Anthropic client (avoids issues if env isn't loaded yet)
+// Lazy-init Anthropic client
 let _ai = null;
 function getAI() {
   if (!_ai) _ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -17,44 +17,82 @@ function getAI() {
 
 // ─── Timing Constants ─────────────────────────────────────────────────────────
 
-const TZ = 'America/New_York'; // default — all window calculations in EST
+const DEFAULT_TZ = 'America/New_York'; // EST fallback
 const SILENCE_CHECK_MS = 5 * 60 * 1000; // 5 minutes
-const MORNING_START = 7;  // 7am EST
-const MORNING_END = 8;    // 8am EST
-const EVENING_START = 16; // 4pm EST
-const EVENING_END = 20;   // 8pm EST
+const MORNING_START = 7;  // 7am
+const MORNING_END = 8;    // 8am
+const EVENING_START = 16; // 4pm
+const EVENING_END = 20;   // 8pm
+
+// ─── Timezone Estimation ──────────────────────────────────────────────────────
+
+/**
+ * Estimate the prospect's IANA timezone from their city name.
+ * Uses a simple keyword heuristic for US regions; defaults to EST.
+ * This covers the most common cases without a full geolocation database.
+ */
+function estimateTimezone(city) {
+  if (!city) return DEFAULT_TZ;
+  const c = city.toLowerCase();
+
+  // Pacific — CA, WA, OR, NV (major cities)
+  if (/\b(los angeles|san francisco|san diego|sacramento|fresno|san jose|oakland|berkeley|anaheim|riverside|long beach|santa ana|irvine|seattle|portland|spokane|tacoma|las vegas|reno|henderson)\b/.test(c)) {
+    return 'America/Los_Angeles';
+  }
+
+  // Mountain — CO, UT, ID, NM, MT, WY, AZ (most of AZ is no DST, but Denver is standard)
+  if (/\b(denver|colorado springs|aurora|boulder|salt lake city|provo|ogden|boise|albuquerque|tucson|phoenix|tempe|mesa|chandler|scottsdale|flagstaff|billings|casper|cheyenne)\b/.test(c)) {
+    return 'America/Denver';
+  }
+
+  // Central — TX, IL, MN, WI, MO, TN, LA, AR, OK, IA, KS, ND, SD, NE
+  if (/\b(chicago|houston|dallas|san antonio|austin|fort worth|el paso|memphis|nashville|new orleans|oklahoma city|tulsa|kansas city|wichita|omaha|minneapolis|saint paul|madison|milwaukee|st louis|little rock|baton rouge|jackson|des moines|sioux falls|fargo|bismarck)\b/.test(c)) {
+    return 'America/Chicago';
+  }
+
+  // Default: Eastern
+  return DEFAULT_TZ;
+}
+
+/**
+ * Get the estimated timezone for a contact by looking up their city.
+ */
+function getContactTimezone(contactId) {
+  const contact = conversations.get(contactId);
+  return estimateTimezone(contact?.city || '');
+}
 
 // ─── Window Helpers ───────────────────────────────────────────────────────────
 
-function estHour(ts) {
+function tzHour(ts, tz) {
   return parseInt(
-    new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: '2-digit', hour12: false })
+    new Intl.DateTimeFormat('en-US', { timeZone: tz || DEFAULT_TZ, hour: '2-digit', hour12: false })
       .format(new Date(ts || Date.now())),
     10
   );
 }
 
-function isInWindow(ts) {
-  const h = estHour(ts || Date.now());
+function isInWindow(ts, tz) {
+  const h = tzHour(ts || Date.now(), tz || DEFAULT_TZ);
   return (h >= MORNING_START && h < MORNING_END) || (h >= EVENING_START && h < EVENING_END);
 }
 
 /**
- * Find the next allowed window start timestamp, scanning forward in 1-hour
- * increments until we find a slot in the morning or evening window.
+ * Find the next allowed send window, scanning forward in 1-hour increments.
+ * Uses the contact's estimated timezone (with EST fallback).
  */
-function nextWindowMs(fromMs) {
-  // Snap forward to the next hour boundary (avoid firing at exact :00)
+function nextWindowMs(fromMs, tz) {
+  const timezone = tz || DEFAULT_TZ;
   let t = Math.ceil((fromMs + 60_000) / 3_600_000) * 3_600_000;
-  const limit = fromMs + 8 * 24 * 60 * 60 * 1000; // search up to 8 days out
+  const limit = fromMs + 8 * 24 * 60 * 60 * 1000;
   while (t < limit) {
-    const h = estHour(t);
+    const h = tzHour(t, timezone);
     if ((h >= MORNING_START && h < MORNING_END) || (h >= EVENING_START && h < EVENING_END)) {
       return t;
     }
-    t += 3_600_000; // advance 1 hour
+    t += 3_600_000;
   }
-  return fromMs + 24 * 60 * 60 * 1000; // fallback: 24h from now
+  return fromMs + 24 * 60 * 60 * 1000;
 }
 
 // ─── File I/O ─────────────────────────────────────────────────────────────────
@@ -87,16 +125,13 @@ function makeId() {
 
 // ─── Job Management ───────────────────────────────────────────────────────────
 
-/**
- * Create a new pending follow-up job.
- */
 function scheduleJob({ contactId, type, position, sendAt, context }) {
   const jobs = load();
   const job = {
     id: makeId(),
     contactId,
-    type,      // 'silence-check' | 'hook' | 'nurture'
-    position,  // 0 = silence-check, 1-3 = hooks, 4+ = nurture
+    type,
+    position,
     sendAt,
     status: 'pending',
     context: context || {},
@@ -106,13 +141,10 @@ function scheduleJob({ contactId, type, position, sendAt, context }) {
   };
   jobs.push(job);
   save(jobs);
-  console.log(`[Followups] Scheduled ${type} pos=${position} for ${contactId} at ${new Date(sendAt).toISOString()}`);
+  console.log(`[Followups] Scheduled ${type} pos=${position} for ${contactId} at ${new Date(sendAt).toISOString()} (tz: ${context?.timezone || DEFAULT_TZ})`);
   return job;
 }
 
-/**
- * Cancel all pending follow-up jobs for a contact (called when they reply).
- */
 function cancelContactJobs(contactId) {
   const jobs = load();
   let count = 0;
@@ -130,17 +162,11 @@ function cancelContactJobs(contactId) {
   return count;
 }
 
-/**
- * Return all jobs whose sendAt has passed and status is still pending.
- */
 function getDueJobs() {
   const now = Date.now();
   return load().filter(j => j.status === 'pending' && j.sendAt <= now);
 }
 
-/**
- * Update a job record by ID.
- */
 function updateJob(jobId, updates) {
   const jobs = load();
   const idx = jobs.findIndex(j => j.id === jobId);
@@ -149,23 +175,17 @@ function updateJob(jobId, updates) {
   save(jobs);
 }
 
-/**
- * Return all jobs for a contact (for monitoring).
- */
 function getContactJobs(contactId) {
   return load().filter(j => j.contactId === contactId);
 }
 
-/**
- * Return all jobs (optionally filtered by status).
- */
 function getAllJobs(statusFilter) {
   const jobs = load();
   if (!statusFilter) return jobs;
   return jobs.filter(j => j.status === statusFilter);
 }
 
-// ─── Prompt Template Interpolation ───────────────────────────────────────────
+// ─── Prompt Interpolation ─────────────────────────────────────────────────────
 
 function interpolate(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
@@ -173,14 +193,14 @@ function interpolate(template, vars) {
 
 // ─── Hook Message Generation ──────────────────────────────────────────────────
 
-async function generateHookMessage(contact, position) {
+async function generateHookMessage(contact, position, jobType) {
   const templates = config.followUpPrompts || {};
-  let templateKey = 'hook1';
-  if (position === 2) templateKey = 'hook2';
-  else if (position >= 3 && contact.type !== 'nurture') templateKey = 'hook3';
-  else if (position >= 4 || contact.type === 'nurture') templateKey = 'nurture';
+  let key = 'hook1';
+  if (position === 2) key = 'hook2';
+  else if (position === 3) key = 'hook3';
+  else if (jobType === 'nurture' || position >= 4) key = 'nurture';
 
-  const rawTemplate = templates[templateKey] || templates.hook1 || '';
+  const rawTemplate = templates[key] || templates.hook1 || '';
   const stage = brain.classifyStage(contact.currentStep ?? null);
 
   const userPrompt = interpolate(rawTemplate, {
@@ -191,7 +211,6 @@ async function generateHookMessage(contact, position) {
     lastReply: contact.lastReply || 'none'
   });
 
-  // Build system prompt — inject winning patterns if available
   let systemPrompt = 'You are a sales text-message copywriter. Return ONLY the message text — no quotes, no preamble, no explanation.';
   const patterns = brain.getWinningPatterns(stage);
   if (patterns && patterns.length > 0) {
@@ -209,27 +228,23 @@ async function generateHookMessage(contact, position) {
   return response.content[0]?.text?.trim() || '';
 }
 
-// ─── Sequence Progression ────────────────────────────────────────────────────
+// ─── Sequence Progression ─────────────────────────────────────────────────────
 
-function scheduleNext(contactId, sentPosition, currentStep, lastBody) {
-  const context = { lastOutboundBody: lastBody, lastOutboundStep: currentStep };
+function scheduleNext(contactId, sentPosition, currentStep, lastBody, tz) {
+  const context = { lastOutboundBody: lastBody, lastOutboundStep: currentStep, timezone: tz };
 
   if (sentPosition === 1) {
-    // Hook 1 sent → Hook 2 at next evening/morning window
-    scheduleJob({ contactId, type: 'hook', position: 2, sendAt: nextWindowMs(Date.now()), context });
+    scheduleJob({ contactId, type: 'hook', position: 2, sendAt: nextWindowMs(Date.now(), tz), context });
   } else if (sentPosition === 2) {
-    // Hook 2 sent → Hook 3 in 1–3 days at a window
     const days = 1 + Math.floor(Math.random() * 3);
     const base = Date.now() + days * 24 * 60 * 60 * 1000;
-    scheduleJob({ contactId, type: 'hook', position: 3, sendAt: nextWindowMs(base), context });
+    scheduleJob({ contactId, type: 'hook', position: 3, sendAt: nextWindowMs(base, tz), context });
   } else if (sentPosition === 3) {
-    // Hook 3 sent → first monthly nurture
     const base = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    scheduleJob({ contactId, type: 'nurture', position: 4, sendAt: nextWindowMs(base), context });
+    scheduleJob({ contactId, type: 'nurture', position: 4, sendAt: nextWindowMs(base, tz), context });
   } else {
-    // Recurring monthly nurture
     const base = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    scheduleJob({ contactId, type: 'nurture', position: sentPosition + 1, sendAt: nextWindowMs(base), context });
+    scheduleJob({ contactId, type: 'nurture', position: sentPosition + 1, sendAt: nextWindowMs(base, tz), context });
   }
 }
 
@@ -249,7 +264,7 @@ async function sendFollowUp(job, contact, position) {
 
   let hookText = '';
   try {
-    hookText = await generateHookMessage(contactCtx, position);
+    hookText = await generateHookMessage(contactCtx, position, job.type);
   } catch (err) {
     console.error(`[Followups] Claude error for ${job.contactId}:`, err.message);
     updateJob(job.id, { status: 'skipped', error: err.message });
@@ -269,11 +284,21 @@ async function sendFollowUp(job, contact, position) {
     return;
   }
 
-  // Persist and record in learning brain
+  // Persist follow-up send to local conversation history (fallback context)
+  conversations.addExchange(job.contactId, {
+    direction: 'outbound',
+    body: hookText,
+    step: contact.currentStep ?? null,
+    conversationId: null,
+    type: `followup-${job.type}-pos${position}`
+  });
+
+  // Record in learning brain
   brain.recordOutbound(job.contactId, hookText, contact.currentStep ?? null);
 
+  const tz = job.context?.timezone || getContactTimezone(job.contactId);
   updateJob(job.id, { status: 'sent', sentAt: Date.now() });
-  scheduleNext(job.contactId, position, contact.currentStep ?? null, hookText);
+  scheduleNext(job.contactId, position, contact.currentStep ?? null, hookText, tz);
 
   console.log(`[Followups] Hook pos=${position} sent to ${job.contactId}: "${hookText.slice(0, 80)}"`);
 }
@@ -291,7 +316,6 @@ async function processSilenceCheck(job) {
     return;
   }
 
-  // Check if the contact replied since the last outbound
   const exchanges = contact.exchanges || [];
   const lastInbound = [...exchanges].reverse().find(e => e.direction === 'inbound');
   const lastOutbound = [...exchanges].reverse().find(e => e.direction === 'outbound');
@@ -299,22 +323,22 @@ async function processSilenceCheck(job) {
   const hasReplied = lastInbound && lastOutbound && lastInbound.timestamp > lastOutbound.timestamp;
 
   if (hasReplied) {
-    updateJob(job.id, { status: 'cancelled', error: 'Contact replied — no follow-up needed' });
+    updateJob(job.id, { status: 'cancelled', error: 'Contact replied' });
     console.log(`[Followups] Silence check for ${job.contactId}: replied — done`);
     return;
   }
 
-  // Contact is silent — send Hook 1 immediately (no window constraint)
   console.log(`[Followups] Silence check for ${job.contactId}: silent — sending Hook 1`);
   await sendFollowUp(job, contact, 1);
 }
 
 async function processHookOrNurture(job) {
-  // Check if we're in an allowed window; if not, defer
-  if (!isInWindow()) {
-    const nextWindow = nextWindowMs(Date.now());
+  const tz = job.context?.timezone || getContactTimezone(job.contactId);
+
+  if (!isInWindow(Date.now(), tz)) {
+    const nextWindow = nextWindowMs(Date.now(), tz);
     updateJob(job.id, { sendAt: nextWindow });
-    console.log(`[Followups] ${job.type} pos=${job.position} for ${job.contactId}: outside window — deferring to ${new Date(nextWindow).toISOString()}`);
+    console.log(`[Followups] ${job.type} pos=${job.position} for ${job.contactId}: outside window (${tz}) — deferring to ${new Date(nextWindow).toISOString()}`);
     return;
   }
 
@@ -366,23 +390,24 @@ let schedulerTimer = null;
 
 function startScheduler() {
   if (schedulerTimer) return;
-  schedulerTimer = setInterval(drainJobs, 60 * 1000); // every 60s
+  schedulerTimer = setInterval(drainJobs, 60 * 1000);
   console.log('[Followups] Scheduler started (60s interval)');
 }
 
 // ─── Public Interface ─────────────────────────────────────────────────────────
 
 /**
- * Schedule a silence check 5 minutes after an outbound AI message.
- * Call this immediately after every outbound send in handleInbound.
+ * Schedule a 5-minute silence check after an outbound AI message.
+ * Stores the estimated prospect timezone in the job context.
  */
 function scheduleSilenceCheck(contactId, currentStep, lastOutboundBody) {
+  const tz = getContactTimezone(contactId);
   scheduleJob({
     contactId,
     type: 'silence-check',
     position: 0,
     sendAt: Date.now() + SILENCE_CHECK_MS,
-    context: { lastOutboundBody, lastOutboundStep: currentStep }
+    context: { lastOutboundBody, lastOutboundStep: currentStep, timezone: tz }
   });
 }
 
@@ -393,5 +418,8 @@ module.exports = {
   getDueJobs,
   getContactJobs,
   getAllJobs,
-  drainJobs
+  drainJobs,
+  estimateTimezone,
+  isInWindow,
+  nextWindowMs
 };
