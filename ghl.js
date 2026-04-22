@@ -90,7 +90,7 @@ async function getOrCreateConversation(contactId) {
   }
 }
 
-async function fetchContactsByTag(tag, maxResults = 500) {
+async function fetchContactsByTag(tag, maxResults = Infinity) {
   const contacts = [];
   let page = 1;
   const limit = 100;

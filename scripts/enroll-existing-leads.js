@@ -19,15 +19,12 @@
 'use strict';
 
 const path = require('path');
-
-// ─── Load env (Replit provides these automatically via process.env) ────────────
-// If running locally, set GHL_API_KEY, GHL_LOCATION_ID, ANTHROPIC_API_KEY
-// in your shell before running this script.
+const fs   = require('fs');
 
 // ─── Parse CLI args ────────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
+const args    = process.argv.slice(2);
 const DRY_RUN = !args.includes('--execute');
-const TAG = (() => {
+const TAG     = (() => {
   const i = args.indexOf('--tag');
   return i !== -1 && args[i + 1] ? args[i + 1] : 'amplify';
 })();
@@ -36,14 +33,23 @@ const DELAY_MS = (() => {
   return i !== -1 && args[i + 1] ? parseInt(args[i + 1], 10) : 2000;
 })();
 
-// ─── Load project modules (path relative to project root) ─────────────────────
-const ROOT = path.join(__dirname, '..');
-const ghl = require(path.join(ROOT, 'ghl'));
+// ─── Project root ──────────────────────────────────────────────────────────────
+const ROOT         = path.join(__dirname, '..');
+const ghl          = require(path.join(ROOT, 'ghl'));
 const conversations = require(path.join(ROOT, 'conversations'));
-const { nextWindowMs, estimateTimezone, getAllJobs } = require(path.join(ROOT, 'followups'));
+const { nextWindowMs, estimateTimezone } = require(path.join(ROOT, 'followups'));
 
-const fs = require('fs');
 const FOLLOWUPS_FILE = path.join(ROOT, 'data', 'followups.json');
+
+// ─── Anthropic (lazy) ─────────────────────────────────────────────────────────
+let _ai = null;
+function getAI() {
+  if (!_ai) {
+    const Anthropic = require('@anthropic-ai/sdk');
+    _ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  }
+  return _ai;
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,43 +82,33 @@ function hasPendingJob(contactId) {
 function scheduleJob({ contactId, type, position, sendAt, context }) {
   const jobs = loadFollowupJobs();
   jobs.push({
-    id: makeJobId(),
+    id:          makeJobId(),
     contactId,
     type,
     position,
     sendAt,
-    status: 'pending',
-    context: context || {},
-    createdAt: Date.now(),
-    sentAt: null,
-    error: null
+    status:      'pending',
+    context:     context || {},
+    createdAt:   Date.now(),
+    sentAt:      null,
+    error:       null
   });
   saveFollowupJobs(jobs);
 }
 
-// ─── Conversation Analysis ─────────────────────────────────────────────────────
+// ─── Message parsing ───────────────────────────────────────────────────────────
 
-/**
- * Determine message direction from raw GHL message object.
- */
 function isInbound(m) {
   return m.direction === 'inbound' || m.direction === 2 ||
          m.messageType === 'inbound' || m.type === 2;
 }
 
-/**
- * Parse a GHL date string into a unix timestamp (ms).
- * Falls back to 0 if unparseable.
- */
 function parseDate(val) {
   if (!val) return 0;
   const t = new Date(val).getTime();
   return isNaN(t) ? 0 : t;
 }
 
-/**
- * Strip GHL system/automation messages (same filter as server.js).
- */
 function isRealMessage(m) {
   const text = (m.body || m.message || '').trim();
   if (!text) return false;
@@ -122,36 +118,99 @@ function isRealMessage(m) {
   return true;
 }
 
-/**
- * Analyse a contact's GHL message history and return enrollment decision.
- *
- * Returns:
- *   {
- *     outboundCount, inboundCount,
- *     hasReplied,       — prospect replied to at least one of our messages
- *     detectedStep,     — best guess at conversation step (0 if unknown/different angle)
- *     enrollPosition,   — which followup position to schedule (2–5)
- *     enrollType,       — 'hook' or 'nurture'
- *     neverContacted,   — we never sent any message
- *     usedCurrentScript — conversation matches current 5-step sales flow
- *   }
- */
-function analyseConversation(ghlMessages) {
-  const real = (ghlMessages || []).filter(isRealMessage);
-  const outbounds = real.filter(m => !isInbound(m));
-  const inbounds  = real.filter(m =>  isInbound(m));
+// ─── Claude-based analysis for contacts who replied ───────────────────────────
 
+/**
+ * Call Claude to determine the best re-entry hook position and currentStep
+ * for a contact who engaged (sent at least one inbound reply).
+ *
+ * Returns { currentStep, enrollPosition, reasoning }.
+ */
+async function claudeAnalyseConversation(ghlMessages) {
+  const real = ghlMessages.filter(isRealMessage);
+  // Chronological order for Claude
+  const sorted = [...real].sort((a, b) => {
+    const ta = parseDate(a.dateAdded || a.createdAt);
+    const tb = parseDate(b.dateAdded || b.createdAt);
+    return ta - tb;
+  });
+
+  const transcript = sorted.map(m => {
+    const who  = isInbound(m) ? 'PROSPECT' : 'US';
+    const text = (m.body || m.message || '').trim();
+    return `${who}: ${text}`;
+  }).join('\n');
+
+  const prompt = `You are analyzing an SMS conversation between a sales rep and an audiology practice owner to determine the best way to re-engage the prospect.
+
+CONVERSATION TRANSCRIPT:
+${transcript}
+
+Our 8-step SMS sales flow:
+- Step 1: Introduction / initial hook (who we are, curious about their practice)
+- Step 2: Benefits angle (insurance resets, percentage not captured)
+- Step 3: Dormant patients angle (patients not seen in 2+ years)
+- Step 4: Practice research reveal (mention specific gap we found)
+- Step 5: Objection handling / follow-up
+- Step 6: Social proof / case study
+- Step 7: Booking pitch (stack 2-4 revenue gaps, pitch 10-min Zoom)
+- Step 8: Final close / last attempt
+
+Analyze the conversation and return a JSON object with exactly these fields:
+{
+  "currentStep": <number 0-8, the step they were on when conversation stalled>,
+  "enrollPosition": <number 2-5, which follow-up hook position to start them at>,
+  "reasoning": "<one sentence explanation>"
+}
+
+Rules:
+- If the conversation used a clearly different sales approach than the 8-step flow above, set currentStep to 0.
+- enrollPosition 2 = send the next follow-up soon (1–2 days), for warm or semi-engaged leads.
+- enrollPosition 3 = send in 3–4 days, for moderately stale leads.
+- enrollPosition 4 = send in 5–7 days, for colder leads who engaged briefly but faded.
+- enrollPosition 5 = longer re-engagement arc for very cold leads.
+- Never set confirmationPending or awaitingRetryName fields — ignore those.
+- Respond with ONLY the raw JSON object, no markdown, no explanation outside the JSON.`;
+
+  try {
+    const res = await getAI().messages.create({
+      model:      process.env.ANTHROPIC_MODEL || 'claude-opus-4-5',
+      max_tokens: 300,
+      messages:   [{ role: 'user', content: prompt }]
+    });
+
+    const raw  = (res.content[0]?.text || '').trim();
+    const json = JSON.parse(raw);
+    return {
+      currentStep:    Number(json.currentStep)    || 0,
+      enrollPosition: Number(json.enrollPosition) || 3,
+      reasoning:      String(json.reasoning || '')
+    };
+  } catch (err) {
+    console.warn(`  [Claude] Analysis failed: ${err.message} — using fallback heuristics`);
+    return null;
+  }
+}
+
+// ─── Heuristic fallback analysis ──────────────────────────────────────────────
+
+/**
+ * Used when contacts have NO inbound replies (Claude not needed for clear-cut cases)
+ * or when the Claude call fails.
+ */
+function heuristicAnalysis(ghlMessages) {
+  const real        = (ghlMessages || []).filter(isRealMessage);
+  const outbounds   = real.filter(m => !isInbound(m));
+  const inbounds    = real.filter(m =>  isInbound(m));
   const outboundCount = outbounds.length;
   const inboundCount  = inbounds.length;
 
-  // GHL returns newest-first — [0] is the most recent
   const lastOutTime = outboundCount > 0 ? parseDate(outbounds[0].dateAdded || outbounds[0].createdAt) : 0;
   const lastInTime  = inboundCount  > 0 ? parseDate(inbounds[0].dateAdded  || inbounds[0].createdAt)  : 0;
 
-  const hasReplied = inboundCount > 0;
+  const hasReplied       = inboundCount > 0;
   const lastReplyAfterUs = hasReplied && lastInTime > lastOutTime;
 
-  // Detect which sales script was used
   const allText = real.map(m => (m.body || m.message || '').toLowerCase()).join(' ');
   const usedCurrentScript =
     allText.includes('percentage actually went through') ||
@@ -159,7 +218,6 @@ function analyseConversation(ghlMessages) {
     allText.includes('benefits have reset') ||
     allText.includes("haven't seen in 2+");
 
-  // Detect conversation step from outbound message content
   let detectedStep = 0;
   if (allText.includes("haven't seen in 2+") || allText.includes('bring them back in')) {
     detectedStep = 3;
@@ -175,55 +233,51 @@ function analyseConversation(ghlMessages) {
     detectedStep = 1;
   }
 
-  // If old script angle, treat as early stage so hooks re-engage naturally
-  if (!usedCurrentScript && outboundCount > 0) {
-    detectedStep = 0;
-  }
+  if (!usedCurrentScript && outboundCount > 0) detectedStep = 0;
 
-  // Determine hook position to enroll at
   let enrollPosition;
-  let enrollType = 'hook';
-
   if (outboundCount === 0) {
-    // Never contacted — start at the very beginning of follow-up sequence
     enrollPosition = 2;
   } else if (!hasReplied) {
-    // We sent messages but they never replied
     if (outboundCount <= 2) enrollPosition = 2;
     else if (outboundCount <= 4) enrollPosition = 3;
     else enrollPosition = 4;
   } else if (!lastReplyAfterUs) {
-    // They replied but we had the last word — they went quiet on us
     enrollPosition = 3;
   } else {
-    // They replied and their last message is more recent (we haven't responded)
-    // They're still warm but may need a nudge
     enrollPosition = 2;
   }
 
   return {
-    outboundCount,
-    inboundCount,
-    hasReplied,
-    detectedStep,
+    currentStep:    detectedStep,
     enrollPosition,
-    enrollType,
+    hasReplied,
+    inboundCount,
+    outboundCount,
+    usedCurrentScript,
     neverContacted: outboundCount === 0,
-    usedCurrentScript
+    reasoning: hasReplied
+      ? `Heuristic: ${inboundCount} reply/replies detected, step ~${detectedStep}`
+      : outboundCount === 0
+        ? 'Never contacted'
+        : `No reply to ${outboundCount} message(s)`
   };
 }
 
-// ─── Format exchange for import ───────────────────────────────────────────────
+// ─── Format exchanges for local import (preserves original GHL timestamps) ─────
 
 function formatExchanges(ghlMessages, convId) {
   const real = (ghlMessages || []).filter(isRealMessage);
-  // GHL is newest-first — reverse to chronological
-  return [...real].reverse().map(m => ({
-    direction: isInbound(m) ? 'inbound' : 'outbound',
-    body: (m.body || m.message || '').trim(),
-    step: null,
+  return [...real].sort((a, b) => {
+    const ta = parseDate(a.dateAdded || a.createdAt);
+    const tb = parseDate(b.dateAdded || b.createdAt);
+    return ta - tb;
+  }).map(m => ({
+    direction:      isInbound(m) ? 'inbound' : 'outbound',
+    body:           (m.body || m.message || '').trim(),
+    step:           null,
     conversationId: convId || null,
-    timestamp: parseDate(m.dateAdded || m.createdAt) || Date.now()
+    timestamp:      parseDate(m.dateAdded || m.createdAt) || Date.now()
   }));
 }
 
@@ -231,13 +285,13 @@ function formatExchanges(ghlMessages, convId) {
 
 async function main() {
   console.log('\n══════════════════════════════════════════════════════');
-  console.log(`  Amplify Lead Enrollment Script`);
+  console.log('  Amplify Lead Enrollment Script');
   console.log(`  Mode:  ${DRY_RUN ? '🔍 DRY RUN (no writes)' : '🚀 EXECUTE'}`);
   console.log(`  Tag:   "${TAG}"`);
   console.log(`  Delay: ${DELAY_MS}ms between contacts`);
   console.log('══════════════════════════════════════════════════════\n');
 
-  // 1. Fetch all contacts with the tag
+  // 1. Fetch ALL contacts with the tag (no cap — paginate until exhausted)
   console.log(`Fetching contacts tagged "${TAG}" from GHL...`);
   const ghlContacts = await ghl.fetchContactsByTag(TAG);
 
@@ -250,20 +304,23 @@ async function main() {
 
   // 2. Process each contact
   const stats = { total: ghlContacts.length, enrolled: 0, skipped: 0, errors: 0 };
-  const rows = [];
+  const rows  = [];
 
   for (const ghlContact of ghlContacts) {
     const contactId = ghlContact.id;
     const firstName = ghlContact.firstName || ghlContact.name || '—';
-    const phone     = ghlContact.phone || '—';
-    const city      = ghlContact.city || ghlContact.address?.city || '';
-    const tags      = (ghlContact.tags || []).map(t => t.toLowerCase());
+    const phone     = ghlContact.phone     || '—';
+    const city      = ghlContact.city      || ghlContact.address?.city || '';
+    const tags      = (ghlContact.tags || []).map(t => (typeof t === 'string' ? t : (t.name || '')).toLowerCase());
 
-    let row = { contactId, firstName, phone, city, action: '', reason: '', position: null, step: null };
+    let row = {
+      contactId, firstName, phone, city,
+      action: '', reason: '', position: null, step: null
+    };
 
     try {
       // ── Safety: Disable AI tag
-      if (tags.includes('disable ai')) {
+      if (tags.some(t => t === 'disable ai')) {
         row.action = 'SKIP';
         row.reason = 'Has "Disable AI" tag';
         stats.skipped++;
@@ -290,39 +347,50 @@ async function main() {
         continue;
       }
 
-      // ── Fetch conversation history
-      const convId = await ghl.getOrCreateConversation(contactId);
+      // ── Fetch conversation history from GHL
+      const convId     = await ghl.getOrCreateConversation(contactId);
       const ghlMessages = convId ? await ghl.fetchMessages(convId) : [];
+      const realMessages = (ghlMessages || []).filter(isRealMessage);
+      const hasAnyInbound = realMessages.some(m => isInbound(m));
 
       // ── Analyse state
-      const analysis = analyseConversation(ghlMessages);
-      const tz = estimateTimezone(city);
-
-      // ── Determine send time (next available window)
-      const DAY = 24 * 60 * 60 * 1000;
-      let sendAt;
-      if (analysis.enrollPosition === 2) {
-        sendAt = nextWindowMs(Date.now(), tz);
-      } else if (analysis.enrollPosition === 3) {
-        sendAt = nextWindowMs(Date.now() + 1 * DAY, tz);
+      let analysis;
+      if (hasAnyInbound) {
+        // Mid-conversation lead: use Claude for nuanced decision
+        console.log(`  [Claude] Analysing ${firstName} (${phone})...`);
+        const claudeResult = await claudeAnalyseConversation(ghlMessages);
+        if (claudeResult) {
+          const heuristic = heuristicAnalysis(ghlMessages);
+          analysis = {
+            ...heuristic,
+            currentStep:    claudeResult.currentStep,
+            enrollPosition: claudeResult.enrollPosition,
+            reasoning:      `Claude: ${claudeResult.reasoning}`
+          };
+        } else {
+          // Claude failed — fall back to heuristics
+          analysis = heuristicAnalysis(ghlMessages);
+        }
       } else {
-        sendAt = nextWindowMs(Date.now() + 2 * DAY, tz);
+        // Never replied — heuristics are sufficient
+        analysis = heuristicAnalysis(ghlMessages);
       }
 
+      const tz = estimateTimezone(city);
+      const DAY = 24 * 60 * 60 * 1000;
+      const baseDelay = Math.max(0, analysis.enrollPosition - 2) * DAY;
+      const sendAt = nextWindowMs(Date.now() + baseDelay, tz);
+
       row.position = analysis.enrollPosition;
-      row.step     = analysis.detectedStep;
+      row.step     = analysis.currentStep;
       row.action   = 'ENROLL';
-      row.reason   = analysis.neverContacted
-        ? 'Never contacted — starting fresh'
-        : analysis.hasReplied
-          ? `Engaged (${analysis.inboundCount} replies, step ~${analysis.detectedStep})`
-          : `No reply to ${analysis.outboundCount} message(s)`;
+      row.reason   = analysis.reasoning;
 
       if (!DRY_RUN) {
         // ── Create/update local contact record
         conversations.ensureContact(contactId, { firstName, city, phone });
 
-        // ── Import GHL exchanges if local record has none
+        // ── Import GHL exchanges (if local record has none) — preserves original timestamps
         const fresh = conversations.get(contactId);
         if (!fresh?.exchanges?.length && ghlMessages.length > 0) {
           const exchanges = formatExchanges(ghlMessages, convId);
@@ -331,21 +399,19 @@ async function main() {
           }
         }
 
-        // ── Update step
-        if (analysis.detectedStep > 0) {
-          conversations.update(contactId, { currentStep: analysis.detectedStep });
-        }
+        // ── Persist detected step
+        conversations.update(contactId, { currentStep: analysis.currentStep });
 
         // ── Schedule follow-up job
         scheduleJob({
           contactId,
-          type: analysis.enrollType,
+          type:     'hook',
           position: analysis.enrollPosition,
           sendAt,
           context: {
-            lastOutboundBody: '',
-            lastOutboundStep: analysis.detectedStep,
-            timezone: tz,
+            lastOutboundBody:  '',
+            lastOutboundStep:  analysis.currentStep,
+            timezone:          tz,
             enrolledFromScript: true
           }
         });
@@ -364,41 +430,42 @@ async function main() {
     rows.push(row);
   }
 
-  // 3. Print table
-  console.log('\n' + '─'.repeat(100));
+  // 3. Print results table
+  const W = 100;
+  console.log('\n' + '─'.repeat(W));
   console.log(
     'Name'.padEnd(20) +
     'Phone'.padEnd(18) +
-    'City'.padEnd(18) +
+    'City'.padEnd(16) +
     'Action'.padEnd(10) +
     'Pos'.padEnd(5) +
     'Step'.padEnd(6) +
     'Reason'
   );
-  console.log('─'.repeat(100));
+  console.log('─'.repeat(W));
 
   for (const r of rows) {
     const symbol = r.action === 'ENROLL' ? '✓' : r.action === 'SKIP' ? '–' : '✗';
     console.log(
       `${symbol} ${r.firstName}`.padEnd(20) +
       r.phone.padEnd(18) +
-      (r.city || '—').padEnd(18) +
+      (r.city || '—').padEnd(16) +
       r.action.padEnd(10) +
       (r.position != null ? String(r.position) : '—').padEnd(5) +
-      (r.step != null ? String(r.step) : '—').padEnd(6) +
-      r.reason
+      (r.step     != null ? String(r.step)     : '—').padEnd(6) +
+      (r.reason || '')
     );
   }
 
-  console.log('─'.repeat(100));
-  console.log(`\nSummary:`);
+  console.log('─'.repeat(W));
+  console.log('\nSummary:');
   console.log(`  Total found:  ${stats.total}`);
   console.log(`  Enrolled:     ${stats.enrolled}${DRY_RUN ? ' (dry run — not written)' : ''}`);
   console.log(`  Skipped:      ${stats.skipped}`);
   console.log(`  Errors:       ${stats.errors}`);
 
   if (DRY_RUN && stats.enrolled > 0) {
-    console.log('\n  ⚡ Run with --execute to actually enroll these contacts.');
+    console.log('\n  Run with --execute to actually enroll these contacts.');
   }
   console.log();
 }

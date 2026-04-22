@@ -69,12 +69,15 @@ function addExchange(contactId, exchange) {
   const all = load();
   if (!all[contactId]) return;
   all[contactId].exchanges = all[contactId].exchanges || [];
+  const ts = exchange.timestamp && typeof exchange.timestamp === 'number' && exchange.timestamp > 0
+    ? exchange.timestamp
+    : Date.now();
   all[contactId].exchanges.push({
     direction: exchange.direction,
     body: exchange.body,
     step: exchange.step || null,
     conversationId: exchange.conversationId || null,
-    timestamp: Date.now()
+    timestamp: ts
   });
   all[contactId].lastMessageAt = Date.now();
   save(all);
