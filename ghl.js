@@ -187,10 +187,10 @@ async function sendEmail(contactId, subject, body) {
 
   try {
     const payload = {
-      type: 'Email',
+      type:      'Email',
       contactId,
       subject,
-      body
+      html: body
     };
     const res = await fetch(`${BASE}/conversations/messages`, {
       method: 'POST',
