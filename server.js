@@ -34,6 +34,59 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const jobQueue = [];
 let processing = false;
 
+// ─── Step-3 Auto-Send Tracker ─────────────────────────────────────────────────
+// When PRACTICE_DETECTED fires, a pure bridge is sent and Step 3 is auto-sent
+// 45 seconds later (after the scan has had time to start). Timeouts are tracked
+// here so they can be cancelled if the prospect replies before the delay fires.
+const pendingStep3 = new Map(); // contactId → setTimeout handle
+
+const STEP3_DELAY_MS = 45 * 1000;
+const STEP3_TEXT = 'Now think about this — you\'ve got patients you haven\'t seen in 2+ years. Their hearing has gotten worse. Their benefits have reset. They\'re not coming back on their own. What are you doing to bring them back in before they end up at the practice down the road?';
+
+function scheduleStep3AutoSend(contactId, resolvedConvId) {
+  clearPendingStep3(contactId);
+  const handle = setTimeout(async () => {
+    pendingStep3.delete(contactId);
+    const contact = conversations.get(contactId);
+    if (!contact || contact.booked) return;
+
+    // Cancel if prospect already replied after the bridge
+    const exch = contact.exchanges || [];
+    const lastOut = [...exch].reverse().find(e => e.direction === 'outbound');
+    const lastIn = [...exch].reverse().find(e => e.direction === 'inbound');
+    if (lastIn && lastOut && lastIn.timestamp > lastOut.timestamp) {
+      console.log(`[Step3Auto] ${contactId} already replied — skipping auto-send`);
+      return;
+    }
+
+    try {
+      await ghl.sendMessage(contactId, STEP3_TEXT);
+      conversations.addExchange(contactId, {
+        direction: 'outbound',
+        body: STEP3_TEXT,
+        step: 3,
+        conversationId: resolvedConvId || null
+      });
+      brain.recordOutbound(contactId, STEP3_TEXT, 3);
+      conversations.update(contactId, { currentStep: 3 });
+      followups.scheduleSilenceCheck(contactId, 3, STEP3_TEXT);
+      console.log(`[Step3Auto] Step 3 question sent to ${contactId}`);
+    } catch (err) {
+      console.error(`[Step3Auto] Failed to send Step 3 for ${contactId}:`, err.message);
+    }
+  }, STEP3_DELAY_MS);
+  pendingStep3.set(contactId, handle);
+  console.log(`[Step3Auto] Scheduled Step 3 for ${contactId} in ${STEP3_DELAY_MS / 1000}s`);
+}
+
+function clearPendingStep3(contactId) {
+  if (pendingStep3.has(contactId)) {
+    clearTimeout(pendingStep3.get(contactId));
+    pendingStep3.delete(contactId);
+    console.log(`[Step3Auto] Cancelled pending Step 3 for ${contactId}`);
+  }
+}
+
 function enqueueJob(job) {
   jobQueue.push(job);
   if (!processing) drainQueue();
@@ -152,6 +205,9 @@ app.post('/webhooks/ghl/inbound', async (req, res) => {
   // Cancel follow-up jobs immediately at intake — before enqueue — so a queued
   // AI handler or a due scheduler job cannot fire after this inbound arrives.
   followups.cancelContactJobs(contactId);
+
+  // Cancel any pending auto-send of Step 3 (they replied, so flow resumes normally)
+  clearPendingStep3(contactId);
 
   enqueueJob({ contactId, conversationId, messageBody, firstName, city, phone });
 });
@@ -290,7 +346,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   const detectedStep = stepMatch ? parseInt(stepMatch[1], 10) : null;
   reply = reply.replace(/\[STEP:\d+\]\s*/gi, '').trim();
 
-  // [PRACTICE_DETECTED:name] — trigger GMB research
+  // [PRACTICE_DETECTED:name] — trigger GMB research + schedule Step 3 auto-send
   const practiceMatch = reply.match(/\[PRACTICE_DETECTED:([^\]]+)\]/i);
   if (practiceMatch) {
     const practiceName = practiceMatch[1].trim();
@@ -326,6 +382,9 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
         }
       }).catch(() => {});
     }
+
+    // Bridge sent — schedule Step 3 question to fire in 45 seconds
+    scheduleStep3AutoSend(contactId, resolvedConvId);
   }
 
   // [BOOKED] — mark contact as booked

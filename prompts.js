@@ -25,7 +25,7 @@ const FILE = path.join(__dirname, 'data', 'prompts.json');
 // ─── Prompt Version ───────────────────────────────────────────────────────────
 // Bump this when the conversationPrompt default changes significantly so the
 // stored version is automatically replaced on next server start.
-const CONVERSATION_PROMPT_VERSION = 2;
+const CONVERSATION_PROMPT_VERSION = 3;
 
 // ─── Default Prompt Definitions ───────────────────────────────────────────────
 
