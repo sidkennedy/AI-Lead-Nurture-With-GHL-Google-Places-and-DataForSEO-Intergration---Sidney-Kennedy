@@ -1691,18 +1691,29 @@ textarea:focus{border-color:#4263eb}
 .status-err{color:#ef4444}
 .char-count{font-size:12px;color:#555;margin-left:auto}
 .page-header{text-align:center;max-width:820px;margin:0 auto 40px}
-.toast-bar{position:fixed;top:0;left:0;right:0;z-index:9999;padding:14px 24px;font-size:14px;font-weight:600;text-align:center;display:none;align-items:center;justify-content:center;gap:16px}
-.toast-bar.toast-ok{background:#14532d;color:#4ade80;border-bottom:1px solid #166534}
-.toast-bar.toast-err{background:#450a0a;color:#f87171;border-bottom:1px solid #7f1d1d}
-.toast-dismiss{background:transparent;border:1px solid currentColor;border-radius:6px;color:inherit;cursor:pointer;font-size:12px;padding:3px 10px;opacity:.7}
-.toast-dismiss:hover{opacity:1}
+.modal-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
+.modal-overlay.show{display:flex}
+.modal-box{background:#1a1a1a;border:2px solid #2a2a2a;border-radius:16px;padding:32px 36px;max-width:500px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.8)}
+.modal-box.modal-ok{border-color:#22c55e}
+.modal-box.modal-err{border-color:#ef4444}
+.modal-icon{font-size:48px;line-height:1;margin-bottom:14px}
+.modal-icon.ok{color:#22c55e}
+.modal-icon.err{color:#ef4444}
+.modal-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:8px}
+.modal-msg{font-size:14px;color:#aaa;line-height:1.6;margin-bottom:22px;word-break:break-word}
+.modal-btn{background:#4263eb;color:#fff;border:none;border-radius:8px;padding:10px 32px;font-size:14px;font-weight:600;cursor:pointer}
+.modal-btn:hover{background:#3b5bdb}
 .last-saved{font-size:11px;color:#3b5bdb;margin-left:8px}
 </style>
 </head>
 <body>
-<div class="toast-bar" id="toast-bar" role="alert">
-  <span id="toast-msg"></span>
-  <button class="toast-dismiss" onclick="dismissToast()">Dismiss</button>
+<div class="modal-overlay" id="save-modal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box" id="modal-box">
+    <div class="modal-icon" id="modal-icon"></div>
+    <div class="modal-title" id="modal-title"></div>
+    <div class="modal-msg" id="modal-msg"></div>
+    <button class="modal-btn" onclick="closeModal()">OK</button>
+  </div>
 </div>
 <div class="logo">Powered Up AI</div>
 <div style="max-width:820px;margin:0 auto 20px">
@@ -1758,20 +1769,29 @@ function renderPrompts() {
   });
 }
 
-let _toastTimer = null;
-function showToast(msg, isError) {
-  const bar = document.getElementById('toast-bar');
-  document.getElementById('toast-msg').textContent = msg;
-  bar.className = 'toast-bar ' + (isError ? 'toast-err' : 'toast-ok');
-  bar.style.display = 'flex';
-  clearTimeout(_toastTimer);
-  if (!isError) {
-    _toastTimer = setTimeout(dismissToast, 6000);
+function showModal(title, msg, isError) {
+  const overlay = document.getElementById('save-modal');
+  const box = document.getElementById('modal-box');
+  const icon = document.getElementById('modal-icon');
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-msg').textContent = msg;
+  if (isError) {
+    box.className = 'modal-box modal-err';
+    icon.className = 'modal-icon err';
+    icon.textContent = '\u2717';
+  } else {
+    box.className = 'modal-box modal-ok';
+    icon.className = 'modal-icon ok';
+    icon.textContent = '\u2713';
   }
+  overlay.classList.add('show');
 }
-function dismissToast() {
-  document.getElementById('toast-bar').style.display = 'none';
+function closeModal() {
+  document.getElementById('save-modal').classList.remove('show');
 }
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
 
 async function savePrompt(name) {
   console.log('[Prompts] savePrompt called for:', name);
@@ -1800,11 +1820,11 @@ async function savePrompt(name) {
     document.getElementById('badge-' + name).className = 'badge badge-modified';
     document.getElementById('card-' + name).className = 'prompt-card modified';
     resetBtn.disabled = false;
-    showToast('\u2713 "' + label + '" saved successfully at ' + timeStr, false);
+    showModal('Prompt Saved', '"' + label + '" was saved successfully at ' + timeStr + '. Refresh the page to confirm — your edits will still be there.', false);
   } catch(err) {
     statusEl.textContent = '\u2717 Error: ' + err.message;
     statusEl.className = 'status status-err';
-    showToast('\u2717 Failed to save "' + label + '": ' + err.message, true);
+    showModal('Save Failed', 'Could not save "' + label + '". Reason: ' + err.message, true);
   } finally {
     saveBtn.disabled = false;
   }
@@ -1835,13 +1855,13 @@ async function resetPrompt(name) {
     document.getElementById('badge-' + name).textContent = 'Default';
     document.getElementById('badge-' + name).className = 'badge badge-default';
     document.getElementById('card-' + name).className = 'prompt-card';
-    showToast('\u2713 "' + label + '" reset to default', false);
+    showModal('Prompt Reset', '"' + label + '" has been reset to its default value.', false);
     setTimeout(() => { statusEl.textContent = ''; }, 4000);
   } catch(err) {
     statusEl.textContent = '\u2717 Error: ' + err.message;
     statusEl.className = 'status status-err';
     resetBtn.disabled = false;
-    showToast('\u2717 Failed to reset "' + label + '": ' + err.message, true);
+    showModal('Reset Failed', 'Could not reset "' + label + '". Reason: ' + err.message, true);
   }
 }
 

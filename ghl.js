@@ -98,10 +98,18 @@ async function fetchContactsByTag(tag) {
   let startAfterId = null;
   let totalScanned = 0;
 
+  // Helper: format a GHL error response into a user-friendly message
+  function formatGhlError(status) {
+    if (status === 429) return 'GHL is rate-limiting us (429 Too Many Requests). Wait 60 seconds and try again. If this keeps happening, your GHL plan may have a low API quota.';
+    if (status === 401) return 'GHL authentication failed (401). Your GHL_API_KEY is invalid or expired.';
+    if (status === 403) return 'GHL permission denied (403). Your API key does not have access to this location.';
+    if (status === 404) return 'GHL location not found (404). Check your GHL_LOCATION_ID.';
+    return `GHL API error ${status}. Check GHL_API_KEY and GHL_LOCATION_ID, or try again in a moment.`;
+  }
+
   // GHL doesn't support server-side tag filtering on the contacts list endpoint.
   // Paginate through all contacts using cursor-based pagination and filter locally.
-  // Errors are intentionally NOT caught here — they propagate to the caller so
-  // the UI can show the real GHL error instead of silently showing "0 found".
+  // 429 (rate limit) is retried with exponential backoff up to 3 times before giving up.
   while (true) {
     const params = new URLSearchParams({
       locationId: process.env.GHL_LOCATION_ID || '',
@@ -109,8 +117,19 @@ async function fetchContactsByTag(tag) {
     });
     if (startAfterId) params.set('startAfterId', startAfterId);
 
-    const res = await fetch(`${BASE}/contacts/?${params.toString()}`, { headers: headers() });
-    if (!res.ok) throw new Error(`GHL API error ${res.status} — check GHL_API_KEY and GHL_LOCATION_ID`);
+    let res;
+    let attempt = 0;
+    const maxAttempts = 4; // initial + 3 retries
+    while (true) {
+      res = await fetch(`${BASE}/contacts/?${params.toString()}`, { headers: headers() });
+      if (res.status !== 429 || attempt >= maxAttempts - 1) break;
+      const waitMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+      console.warn(`[GHL] 429 received — backing off ${waitMs}ms (attempt ${attempt + 1}/${maxAttempts - 1})`);
+      await new Promise(r => setTimeout(r, waitMs));
+      attempt++;
+    }
+
+    if (!res.ok) throw new Error(formatGhlError(res.status));
     const data = await res.json();
 
     const batch = data.contacts || [];
