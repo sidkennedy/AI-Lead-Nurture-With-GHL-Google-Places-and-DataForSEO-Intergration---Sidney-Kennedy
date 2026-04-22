@@ -5,6 +5,16 @@ const MESSAGES_FILE = path.join(__dirname, 'data', 'messages.json');
 const PATTERNS_FILE = path.join(__dirname, 'data', 'winning-patterns.json');
 const REPLY_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
 
+// Lazy-init Anthropic (avoids issues if env isn't loaded yet)
+let _ai = null;
+function getAI() {
+  if (!_ai) {
+    const Anthropic = require('@anthropic-ai/sdk');
+    _ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  }
+  return _ai;
+}
+
 // ─── Stage Classification ─────────────────────────────────────────────────────
 // Maps conversation step number to a human-readable stage label.
 // Steps come from the [STEP:N] markers in config.js conversation flow.
@@ -336,17 +346,77 @@ function buildWinningPatternsPrompt(stage) {
   return `\n\nWINNING PATTERNS FOR STAGE "${stage}" (based on real conversation data — lean toward these openings):\n${lines.join('\n')}`;
 }
 
+// ─── LLM Qualitative Analysis ────────────────────────────────────────────────
+
+/**
+ * Run a Claude-powered qualitative analysis of the statistical patterns.
+ * Uses the configurable brain.analysisPrompt (editable via prompt editor UI).
+ * Stores the result in winning-patterns.json as _qualitativeInsights.
+ *
+ * This is called after runAnalysis() during each scheduled 72h analysis job.
+ */
+async function runLlmAnalysis(patterns) {
+  const prompts = require('./prompts');
+  const systemPrompt = prompts.get('brain.analysisPrompt');
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.log('[Brain] LLM analysis skipped — ANTHROPIC_API_KEY not set');
+    return;
+  }
+
+  const patternSummary = Object.entries(patterns)
+    .filter(([k]) => k !== '_meta' && k !== '_qualitativeInsights')
+    .map(([stage, pats]) => `Stage: ${stage}\n${pats.map(p =>
+      `  Pattern: "${p.example.slice(0, 100)}..." | Sends: ${p.count} | Reply rate: ${p.replyRate}% | Booking rate: ${p.bookingRate}%`
+    ).join('\n')}`)
+    .join('\n\n');
+
+  if (!patternSummary) {
+    console.log('[Brain] LLM analysis skipped — no pattern data');
+    return;
+  }
+
+  try {
+    const response = await getAI().messages.create({
+      model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-5',
+      max_tokens: 400,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: `Here is the performance data:\n\n${patternSummary}` }]
+    });
+
+    const insights = response.content[0]?.text?.trim();
+    if (insights) {
+      const stored = loadPatterns();
+      stored._qualitativeInsights = {
+        text: insights,
+        generatedAt: Date.now()
+      };
+      savePatterns(stored);
+      console.log('[Brain] LLM qualitative analysis complete');
+    }
+  } catch (err) {
+    console.error('[Brain] LLM analysis error:', err.message);
+  }
+}
+
 // ─── Scheduled Analysis ───────────────────────────────────────────────────────
 
 const ANALYSIS_INTERVAL_MS = 72 * 60 * 60 * 1000; // 72 hours
 let analysisTimer = null;
 
+async function runFullAnalysis() {
+  const patterns = runAnalysis();
+  if (Object.keys(patterns).length > 0) {
+    await runLlmAnalysis(patterns);
+  }
+}
+
 function startScheduledAnalysis() {
   if (analysisTimer) return;
   // Run once on startup after a 5-second delay (server needs to be ready)
   setTimeout(() => {
-    runAnalysis();
-    analysisTimer = setInterval(runAnalysis, ANALYSIS_INTERVAL_MS);
+    runFullAnalysis();
+    analysisTimer = setInterval(runFullAnalysis, ANALYSIS_INTERVAL_MS);
   }, 5000);
   console.log('[Brain] Scheduled analysis every 72h');
 }
@@ -358,6 +428,7 @@ module.exports = {
   recordReply,
   recordBooking,
   runAnalysis,
+  runLlmAnalysis,
   getWinningPatterns,
   buildWinningPatternsPrompt,
   getStats,

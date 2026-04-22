@@ -58,6 +58,11 @@ const PROMPT_META = [
     name: 'followup.system',
     label: 'Follow-Up Generator System Role',
     description: 'The system role instruction given to Claude when generating hook/nurture messages. Defines its persona and output format.'
+  },
+  {
+    name: 'brain.analysisPrompt',
+    label: 'Learning Brain Analysis Prompt',
+    description: 'Sent to Claude during the 72-hour learning brain analysis job. Receives reply-rate and booking-rate statistics per stage and message cluster, and should return actionable messaging insights. Insights are stored in winning-patterns.json and injected into conversation prompts.'
   }
 ];
 
@@ -70,7 +75,23 @@ const DEFAULTS = {
   'followup.hook2': config.followUpPrompts?.hook2 || '',
   'followup.hook3': config.followUpPrompts?.hook3 || '',
   'followup.nurture': config.followUpPrompts?.nurture || '',
-  'followup.system': 'You are a sales text-message copywriter. Return ONLY the message text — no quotes, no preamble, no explanation.'
+  'followup.system': 'You are a sales text-message copywriter. Return ONLY the message text — no quotes, no preamble, no explanation.',
+  'brain.analysisPrompt': `You are an AI sales coach analyzing performance data from an audiology practice outreach campaign.
+
+You have been given reply-rate and booking-rate statistics for outbound SMS messages, grouped by conversation stage and message pattern cluster.
+
+Your job: Identify the 2–3 most actionable insights from this data. Focus on:
+- Which stages have the lowest reply rates and why (based on the message examples shown)
+- What tones, openers, or angles are outperforming — and what makes them work
+- Specific, concrete recommendations the sales team should apply to the next batch of messages
+
+RULES:
+- Be direct and specific. Reference actual message examples from the data.
+- No generic advice. Every insight must connect to a pattern visible in the data.
+- 2–3 insights max. Each insight: 2–4 sentences.
+- Plain text only. No markdown, no headers, no bullet points.
+
+OUTPUT: Return only the insights text. No preamble, no labels.`
 };
 
 // ─── File I/O ─────────────────────────────────────────────────────────────────

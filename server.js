@@ -575,8 +575,9 @@ app.get('/api/scan/data/:sessionId', (req, res) => {
 // ─── Admin: Contact Monitoring ────────────────────────────────────────────────
 
 function requireAdmin(req, res, next) {
+  if (!process.env.ADMIN_KEY) return res.status(503).send('ADMIN_KEY not configured');
   const key = req.query.key || req.headers['x-admin-key'];
-  if (key !== process.env.ADMIN_KEY) return res.status(401).send('Unauthorized');
+  if (!key || key !== process.env.ADMIN_KEY) return res.status(401).send('Unauthorized');
   next();
 }
 
@@ -610,9 +611,14 @@ app.get('/api/brain/stats', requireAdmin, (req, res) => {
   res.json(brain.getStats());
 });
 
-app.post('/api/brain/analyze', requireAdmin, (req, res) => {
-  const result = brain.runAnalysis();
-  res.json({ ok: true, patterns: result });
+app.post('/api/brain/analyze', requireAdmin, async (req, res) => {
+  const patterns = brain.runAnalysis();
+  if (Object.keys(patterns).length > 0) {
+    brain.runLlmAnalysis(patterns).catch(err =>
+      console.error('[Admin] LLM analysis error:', err.message)
+    );
+  }
+  res.json({ ok: true, patterns });
 });
 
 // ─── Admin: Follow-Up Job Monitoring ─────────────────────────────────────────
@@ -633,33 +639,33 @@ app.get('/api/followups/:contactId', requireAdmin, (req, res) => {
 // ─── Admin: Prompt Editor ─────────────────────────────────────────────────────
 
 app.get('/admin/prompts', (req, res) => {
+  if (!process.env.ADMIN_KEY) return res.status(503).send('ADMIN_KEY not configured');
   const key = req.query.key || req.headers['x-admin-key'];
-  if (key !== process.env.ADMIN_KEY) {
-    if (!process.env.ADMIN_KEY) return res.status(503).send('ADMIN_KEY not configured');
-    return res.status(401).send('Invalid admin key. Add ?key=YOUR_ADMIN_KEY to the URL.');
+  if (!key || key !== process.env.ADMIN_KEY) {
+    return res.status(401).send('Unauthorized. Add ?key=YOUR_ADMIN_KEY to the URL.');
   }
   const all = prompts.listAll();
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(buildPromptEditorPage(key, all));
 });
 
-app.post('/api/admin/prompts/:name', requireAdmin, (req, res) => {
+app.post('/admin/prompts/:name/reset', requireAdmin, (req, res) => {
+  const { name } = req.params;
+  try {
+    prompts.reset(name);
+    res.json({ ok: true, name, text: prompts.getDefault(name) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/admin/prompts/:name', requireAdmin, (req, res) => {
   const { name } = req.params;
   const { text } = req.body;
   if (typeof text !== 'string') return res.status(400).json({ error: 'text field required' });
   try {
     prompts.set(name, text);
     res.json({ ok: true, name, length: text.length });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/admin/prompts/:name/reset', requireAdmin, (req, res) => {
-  const { name } = req.params;
-  try {
-    prompts.reset(name);
-    res.json({ ok: true, name, text: prompts.getDefault(name) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -852,7 +858,7 @@ async function savePrompt(name) {
   statusEl.textContent = 'Saving\u2026';
   statusEl.className = 'status';
   try {
-    const res = await fetch('/api/admin/prompts/' + encodeURIComponent(name), {
+    const res = await fetch('/admin/prompts/' + encodeURIComponent(name), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
       body: JSON.stringify({ text: ta.value })
@@ -884,7 +890,7 @@ async function resetPrompt(name) {
   statusEl.textContent = 'Resetting\u2026';
   statusEl.className = 'status';
   try {
-    const res = await fetch('/api/admin/prompts/' + encodeURIComponent(name) + '/reset', {
+    const res = await fetch('/admin/prompts/' + encodeURIComponent(name) + '/reset', {
       method: 'POST',
       headers: { 'x-admin-key': ADMIN_KEY }
     });
