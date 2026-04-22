@@ -111,7 +111,18 @@ Rules:
       spend.track(contactId, model, res.usage);
     }
 
-    const raw  = (res.content[0]?.text || '').trim();
+    let raw = (res.content[0]?.text || '').trim();
+
+    // Strip markdown code fences if Claude wrapped the JSON (e.g. ```json ... ```)
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+    // If Claude still prepended prose, extract the first {...} block
+    const braceStart = raw.indexOf('{');
+    const braceEnd   = raw.lastIndexOf('}');
+    if (braceStart !== -1 && braceEnd > braceStart) {
+      raw = raw.slice(braceStart, braceEnd + 1);
+    }
+
     const json = JSON.parse(raw);
     return {
       currentStep:    Number(json.currentStep)    || 0,
