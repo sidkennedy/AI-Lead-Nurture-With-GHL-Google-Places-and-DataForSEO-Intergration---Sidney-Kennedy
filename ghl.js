@@ -90,4 +90,37 @@ async function getOrCreateConversation(contactId) {
   }
 }
 
-module.exports = { fetchContact, fetchMessages, sendMessage, getOrCreateConversation };
+async function fetchContactsByTag(tag, maxResults = 500) {
+  const contacts = [];
+  let page = 1;
+  const limit = 100;
+
+  try {
+    while (contacts.length < maxResults) {
+      const params = new URLSearchParams({
+        locationId: process.env.GHL_LOCATION_ID || '',
+        limit: String(limit),
+        page: String(page)
+      });
+      params.append('tags[]', tag);
+
+      const res = await fetch(`${BASE}/contacts/?${params.toString()}`, { headers: headers() });
+      if (!res.ok) throw new Error(`GHL contacts fetch ${res.status}`);
+      const data = await res.json();
+
+      const batch = data.contacts || [];
+      contacts.push(...batch);
+
+      // Stop if we got fewer than a full page (last page)
+      if (batch.length < limit) break;
+      page++;
+    }
+    console.log(`[GHL] fetchContactsByTag("${tag}"): found ${contacts.length} contact(s)`);
+    return contacts;
+  } catch (err) {
+    console.error('[GHL] fetchContactsByTag error:', err.message);
+    return [];
+  }
+}
+
+module.exports = { fetchContact, fetchMessages, sendMessage, getOrCreateConversation, fetchContactsByTag };
