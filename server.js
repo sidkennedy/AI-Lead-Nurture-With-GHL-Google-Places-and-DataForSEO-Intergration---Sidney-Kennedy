@@ -1276,28 +1276,46 @@ app.get('/admin/enroll', (req, res) => {
   res.send(buildEnrollPage(key));
 });
 
-app.post('/api/enroll/run', requireAdmin, async (req, res) => {
+// ─── Enrollment Background Jobs ───────────────────────────────────────────────
+// Runs in-process so proxy timeouts don't matter. Jobs expire after 10 minutes.
+const _enrollJobs = new Map(); // jobId → { status, result, error, expiresAt }
+
+function _makeJobId() {
+  return `ej-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+function _gcJobs() {
+  const now = Date.now();
+  for (const [id, job] of _enrollJobs) if (job.expiresAt < now) _enrollJobs.delete(id);
+}
+
+app.post('/api/enroll/run', requireAdmin, (req, res) => {
   const tag    = typeof req.body.tag === 'string' && req.body.tag.trim() ? req.body.tag.trim() : '';
   if (!tag) return res.status(400).json({ ok: false, error: 'Tag is required.' });
   const dryRun = req.body.dryRun !== false && req.body.dryRun !== 'false';
 
-  // Hard 25-second timeout — Replit's proxy kills connections after ~30s.
-  // The AbortController signal is passed into the GHL fetch loop so it cancels cleanly.
-  const controller = new AbortController();
-  const timeoutId  = setTimeout(() => controller.abort(), 25000);
+  _gcJobs();
+  const jobId = _makeJobId();
+  _enrollJobs.set(jobId, { status: 'running', result: null, error: null, expiresAt: Date.now() + 10 * 60 * 1000 });
 
-  try {
-    const result = await runEnrollment({ tag, dryRun, delayMs: 1500, signal: controller.signal });
-    clearTimeout(timeoutId);
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const isTimeout = err.name === 'AbortError' || controller.signal.aborted;
-    const message   = isTimeout
-      ? 'Scan timed out (25s). GHL has too many contacts to scan in time — the tag search API may not be available on your plan. Try again; if it keeps failing contact support.'
-      : err.message;
-    if (!res.headersSent) res.status(isTimeout ? 504 : 500).json({ ok: false, error: message });
-  }
+  // Fire-and-forget — runs after response is sent so proxy can't time it out.
+  setImmediate(async () => {
+    try {
+      const result = await runEnrollment({ tag, dryRun, delayMs: 1500 });
+      _enrollJobs.set(jobId, { status: 'done', result, error: null, expiresAt: Date.now() + 10 * 60 * 1000 });
+    } catch (err) {
+      _enrollJobs.set(jobId, { status: 'error', result: null, error: err.message, expiresAt: Date.now() + 10 * 60 * 1000 });
+    }
+  });
+
+  res.json({ ok: true, jobId, status: 'running' });
+});
+
+app.get('/api/enroll/status/:jobId', requireAdmin, (req, res) => {
+  const job = _enrollJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: 'Job not found or expired.' });
+  if (job.status === 'running') return res.json({ ok: true, status: 'running' });
+  if (job.status === 'error')   return res.json({ ok: false, status: 'error', error: job.error });
+  res.json({ ok: true, status: 'done', ...job.result });
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
@@ -1746,7 +1764,7 @@ textarea:focus{border-color:#4263eb}
   <h1>Prompt Editor</h1>
   <p class="subtitle">View and edit every AI prompt. Changes take effect immediately — no restart needed.</p>
   <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
-    BUILD v5 (fast-search) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+    BUILD v6 (background-job) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
   </div>
 </div>
 <div id="prompts"></div>
@@ -1956,7 +1974,7 @@ tr:last-child td{border-bottom:none}
   <h1>Lead Enrollment</h1>
   <p class="subtitle">Preview and enroll GHL contacts into the follow-up sequence.<br>Run a dry-run first to see what will happen, then click Run Enrollment to commit.</p>
   <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
-    BUILD v5 (fast-search) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+    BUILD v6 (background-job) · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
   </div>
 </div>
 
@@ -2058,29 +2076,53 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Poll a background job until done. Shows elapsed time in the status bar.
+async function pollJob(jobId, dryRun) {
+  const start = Date.now();
+  while (true) {
+    await new Promise(r => setTimeout(r, 2500));
+    const secs = Math.round((Date.now() - start) / 1000);
+    setStatus('Scanning GHL contacts\u2026 ' + secs + 's elapsed (safe to wait \u2014 no timeout)');
+    let data;
+    try {
+      const r = await fetch('/api/enroll/status/' + jobId, { headers: { 'x-admin-key': ADMIN_KEY } });
+      data = await r.json();
+    } catch (e) { continue; }
+    if (data.status === 'running') continue;
+    if (!data.ok || data.status === 'error') throw new Error(data.error || 'Unknown error');
+    return data; // status === 'done'
+  }
+}
+
+async function startJob(tag, dryRun) {
+  const res = await fetch('/api/enroll/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
+    body: JSON.stringify({ tag, dryRun })
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+  return data.jobId;
+}
+
 async function doPreview() {
   const tag = document.getElementById('tag-input').value.trim();
   if (!tag) { setStatus('Please enter a GHL tag name first.', 'err'); return; }
   setBusy(true);
-  setStatus('Running dry-run preview\u2026');
+  setStatus('Starting scan\u2026');
   document.getElementById('stats-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'none';
   document.getElementById('btn-run').disabled = true;
-
   try {
-    const res = await fetch('/api/enroll/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
-      body: JSON.stringify({ tag, dryRun: true })
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+    const jobId = await startJob(tag, true);
+    setStatus('Scanning GHL contacts\u2026 0s elapsed (safe to wait \u2014 no timeout)');
+    const data = await pollJob(jobId, true);
     lastRows = data.rows || [];
     renderStats(data.stats, true);
     renderRows(data.rows, true);
-    if (data.stats.total > 0) {
-      setStatus('Dry-run complete. Review the table, then click Run Enrollment to commit.');
-    }
+    setStatus(data.stats.total > 0
+      ? 'Dry-run complete. Review the table, then click Run Enrollment to commit.'
+      : 'Scan complete \u2014 no contacts matched that tag.');
     document.getElementById('btn-run').disabled = (data.stats.total === 0);
   } catch (err) {
     setStatus('\u2717 Error: ' + err.message, 'err');
@@ -2089,22 +2131,15 @@ async function doPreview() {
   }
 }
 
-// Auto-preview removed — wait for user to click Preview button.
-
 async function doRun() {
-  const tag = document.getElementById('tag-input').value.trim() || 'amplify';
+  const tag = document.getElementById('tag-input').value.trim();
   if (!confirm('This will write to conversations and schedule follow-up jobs. Continue?')) return;
   setBusy(true);
-  setStatus('Running enrollment\u2026 (this may take a minute)');
-
+  setStatus('Starting enrollment\u2026');
   try {
-    const res = await fetch('/api/enroll/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
-      body: JSON.stringify({ tag, dryRun: false })
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+    const jobId = await startJob(tag, false);
+    setStatus('Enrolling contacts\u2026 0s elapsed (safe to wait \u2014 no timeout)');
+    const data = await pollJob(jobId, false);
     renderStats(data.stats, false);
     renderRows(data.rows, false);
     setStatus('Enrollment complete.');

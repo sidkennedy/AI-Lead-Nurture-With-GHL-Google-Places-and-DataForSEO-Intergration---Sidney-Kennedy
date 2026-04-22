@@ -106,30 +106,31 @@ async function fetchContactsByTag(tag, signal) {
   let totalScanned = 0;
   const locationId = process.env.GHL_LOCATION_ID || '';
 
-  // Try GHL's server-side tag search first (POST /contacts/search).
-  // This is much faster than paginating all contacts — only returns matching ones.
-  try {
-    const searchRes = await fetch(`${BASE}/contacts/search?locationId=${encodeURIComponent(locationId)}`, {
-      method: 'POST',
-      headers: headers(),
-      body: JSON.stringify({
-        filters: [{ field: 'tags', operator: 'CONTAINS_ANY', value: [tag] }],
-        limit: 200,
-        locationId
-      }),
-      signal
-    });
-    if (searchRes.ok) {
-      const data = await searchRes.json();
-      const contacts = data.contacts || data.data || [];
-      console.log(`[GHL] fetchContactsByTag("${tag}"): search API returned ${contacts.length} contacts`);
-      return { contacts, totalScanned: contacts.length };
+  // Try GHL's server-side tag search first — single request, no pagination.
+  // Try two known body formats (GHL API format varies by account version).
+  const searchBodies = [
+    { locationId, filters: [{ field: 'tags', operator: 'CONTAINS_ANY', value: [tag] }], limit: 200 },
+    { locationId, searchTerm: '', filters: [{ field: 'tag', operator: 'in', value: [tag] }], pageSize: 200, page: 1 },
+  ];
+  for (const body of searchBodies) {
+    try {
+      const searchRes = await fetch(`${BASE}/contacts/search?locationId=${encodeURIComponent(locationId)}`, {
+        method: 'POST', headers: headers(), body: JSON.stringify(body), signal
+      });
+      if (searchRes.ok) {
+        const data = await searchRes.json();
+        const contacts = data.contacts || data.data || [];
+        console.log(`[GHL] fetchContactsByTag("${tag}"): search API returned ${contacts.length} contacts`);
+        return { contacts, totalScanned: contacts.length };
+      }
+      const errText = await searchRes.text().catch(() => '');
+      console.warn(`[GHL] Tag search API ${searchRes.status} (body: ${errText.slice(0, 200)}) — trying next format`);
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      console.warn(`[GHL] Tag search API failed (${err.message}) — trying next format`);
     }
-    console.warn(`[GHL] Tag search API returned ${searchRes.status} — falling back to full scan`);
-  } catch (err) {
-    if (err.name === 'AbortError') throw err;
-    console.warn(`[GHL] Tag search API failed (${err.message}) — falling back to full scan`);
   }
+  console.warn('[GHL] All search formats failed — falling back to full contact scan');
 
   // Fallback: paginate all contacts and filter locally.
   // 429s are retried once (2s wait) before failing so we don't exceed the request timeout.
