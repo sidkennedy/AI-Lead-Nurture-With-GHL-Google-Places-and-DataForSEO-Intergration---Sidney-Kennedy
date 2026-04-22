@@ -216,6 +216,109 @@ app.post('/webhooks/ghl/inbound', async (req, res) => {
   enqueueJob({ contactId, conversationId, messageBody, firstName, city, phone });
 });
 
+// ─── GHL Enrolled Webhook ─────────────────────────────────────────────────────
+// Fires the moment GHL sends the static intro message to a new lead.
+// We create the local contact record and schedule the 5-min silence check
+// (and first email-hook) immediately — without waiting for them to reply.
+
+app.post('/webhooks/ghl/enrolled', async (req, res) => {
+  if (!verifyGhlWebhook(req, res)) return;
+
+  res.json({ received: true });
+
+  const payload = req.body;
+
+  const contactId =
+    payload.contactId ||
+    payload.contact_id ||
+    payload.contact?.id;
+
+  const firstName =
+    payload.contact?.firstName ||
+    payload.firstName ||
+    payload.first_name ||
+    '';
+
+  const city =
+    payload.contact?.city ||
+    payload.city ||
+    '';
+
+  const phone =
+    payload.contact?.phone ||
+    payload.phone ||
+    '';
+
+  const email =
+    payload.contact?.email ||
+    payload.email ||
+    '';
+
+  const rawTags = payload.contact?.tags || payload.tags || [];
+  const tags = rawTags.map(t =>
+    (typeof t === 'string' ? t : (t.name || '')).toLowerCase()
+  );
+
+  if (!contactId) {
+    console.log('[Enrolled] Skipping — missing contactId');
+    return;
+  }
+
+  console.log(`[Enrolled] Received for contact ${contactId} (${firstName || '—'})`);
+
+  // Guard: Disable AI tag → skip entirely
+  if (tags.includes('disable ai')) {
+    console.log(`[Enrolled] Skipping ${contactId} — has Disable AI tag`);
+    return;
+  }
+
+  // Guard: already booked locally
+  const existing = conversations.get(contactId);
+  if (existing?.booked) {
+    console.log(`[Enrolled] Skipping ${contactId} — already booked`);
+    return;
+  }
+
+  // Guard: dedup — if a pending silence check already exists, skip
+  const jobs = followups.getAllJobs('pending');
+  const hasSilenceCheck = jobs.some(
+    j => j.contactId === contactId && j.type === 'silence-check'
+  );
+  if (hasSilenceCheck) {
+    console.log(`[Enrolled] Skipping ${contactId} — silence check already pending`);
+    return;
+  }
+
+  // Create/update local contact record
+  conversations.ensureContact(contactId, { firstName, city, phone, email, tags });
+  conversations.update(contactId, { email, tags });
+
+  const tz = followups.estimateTimezone(city);
+
+  // Schedule 5-min silence check (triggers "Hey, you there?" SMS)
+  followups.scheduleSilenceCheck(contactId, 0, '');
+
+  // Schedule Email #1 at next email window (if contact has email)
+  if (email) {
+    const emailSendAt = followups.nextEmailWindowMs(Date.now(), tz);
+    const hasPendingEmail = followups.getAllJobs('pending').some(
+      j => j.contactId === contactId && j.type === 'email-hook' && j.position === 1
+    );
+    if (!hasPendingEmail) {
+      followups.scheduleJob({
+        contactId,
+        type:     'email-hook',
+        position: 1,
+        sendAt:   emailSendAt,
+        context:  { timezone: tz }
+      });
+      console.log(`[Enrolled] Email #1 scheduled for ${contactId} at ${new Date(emailSendAt).toISOString()}`);
+    }
+  }
+
+  console.log(`[Enrolled] Contact ${contactId} enrolled — silence check + email queued`);
+});
+
 // ─── State Recovery from GHL History ─────────────────────────────────────────
 // Called when local state may be incomplete (e.g. server restart). Scans the
 // raw GHL message history and patches any missing flags back into the contact.
@@ -1310,12 +1413,18 @@ async function loadFollowups() {
       return \`<span class="badge \${map[s] || 'badge-skipped'}">\${escHtml(s)}</span>\`;
     }
 
+    function channelBadge(type) {
+      if ((type || '').startsWith('email-')) return '<span class="badge" style="background:#1a3a2a;color:#34d399;border:1px solid #166534">Email</span>';
+      return '<span class="badge" style="background:#1a2a3a;color:#60a5fa;border:1px solid #1e40af">SMS</span>';
+    }
+
     el.innerHTML = \`<table>
       <thead><tr>
-        <th>Contact</th><th>Type</th><th>Position</th><th>Status</th><th>Scheduled</th><th>Created</th>
+        <th>Contact</th><th>Channel</th><th>Type</th><th>Position</th><th>Status</th><th>Scheduled</th><th>Created</th>
       </tr></thead>
       <tbody>\${jobs.map(j => \`<tr>
         <td>\${contactName(j.contactId)}</td>
+        <td>\${channelBadge(j.type)}</td>
         <td>\${escHtml(j.type || '—')}</td>
         <td>\${j.position != null ? j.position : '—'}</td>
         <td>\${statusBadge(j.status)}</td>
@@ -1359,7 +1468,8 @@ function buildPromptEditorPage(adminKey, promptsList) {
     description: p.description,
     current: p.current,
     isModified: p.isModified,
-    defaultValue: p.defaultValue
+    defaultValue: p.defaultValue,
+    sectionLabel: p.sectionLabel || null
   })));
 
   return `<!DOCTYPE html>
@@ -1416,6 +1526,12 @@ function renderPrompts() {
   const container = document.getElementById('prompts');
   container.innerHTML = '';
   ALL_PROMPTS.forEach(p => {
+    if (p.sectionLabel) {
+      const heading = document.createElement('div');
+      heading.style.cssText = 'max-width:820px;margin:40px auto 20px;padding-bottom:10px;border-bottom:1px solid #2a2a2a;';
+      heading.innerHTML = \`<span style="font-size:13px;font-weight:700;letter-spacing:.06em;color:#555;text-transform:uppercase">\${escapeHtml(p.sectionLabel)}</span>\`;
+      container.appendChild(heading);
+    }
     const card = document.createElement('div');
     card.className = 'prompt-card' + (p.isModified ? ' modified' : '');
     card.id = 'card-' + p.name;

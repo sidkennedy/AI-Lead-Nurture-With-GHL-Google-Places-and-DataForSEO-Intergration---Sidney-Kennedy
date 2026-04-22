@@ -109,6 +109,48 @@ function nextWindowMs(fromMs, tz) {
   return fromMs + 24 * 60 * 60 * 1000;
 }
 
+// ─── Email Window Helpers ─────────────────────────────────────────────────────
+
+// Email send windows (local time):
+//   Morning:  8:30am – 9:00am
+//   Noon:    12:00pm – 1:00pm
+
+function tzHourMinute(ts, tz) {
+  const d = new Date(ts || Date.now());
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz || DEFAULT_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(d);
+  const h = parseInt(parts.find(p => p.type === 'hour').value, 10);
+  const m = parseInt(parts.find(p => p.type === 'minute').value, 10);
+  return { h, m };
+}
+
+function isInEmailWindow(ts, tz) {
+  const { h, m } = tzHourMinute(ts || Date.now(), tz || DEFAULT_TZ);
+  const inMorning = (h === 8 && m >= 30);
+  const inNoon    = (h === 12);
+  return inMorning || inNoon;
+}
+
+/**
+ * Find the next email send window, scanning forward in 30-minute increments.
+ * Windows: 8:30–9:00am and 12:00–1:00pm local time.
+ */
+function nextEmailWindowMs(fromMs, tz) {
+  const timezone = tz || DEFAULT_TZ;
+  const STEP = 30 * 60 * 1000;
+  let t = Math.ceil((fromMs + 60_000) / STEP) * STEP;
+  const limit = fromMs + 8 * 24 * 60 * 60 * 1000;
+  while (t < limit) {
+    if (isInEmailWindow(t, timezone)) return t;
+    t += STEP;
+  }
+  return fromMs + 24 * 60 * 60 * 1000;
+}
+
 // ─── File I/O ─────────────────────────────────────────────────────────────────
 
 function ensureDir() {
@@ -163,7 +205,11 @@ function cancelContactJobs(contactId) {
   const jobs = load();
   let count = 0;
   const updated = jobs.map(j => {
-    if (j.contactId === contactId && j.status === 'pending') {
+    if (
+      j.contactId === contactId &&
+      j.status === 'pending' &&
+      !j.type.startsWith('email-')
+    ) {
       count++;
       return { ...j, status: 'cancelled' };
     }
@@ -171,7 +217,7 @@ function cancelContactJobs(contactId) {
   });
   if (count > 0) {
     save(updated);
-    console.log(`[Followups] Cancelled ${count} pending jobs for ${contactId}`);
+    console.log(`[Followups] Cancelled ${count} pending SMS jobs for ${contactId} (email jobs preserved)`);
   }
   return count;
 }
@@ -510,6 +556,203 @@ async function sendFollowUp(job, contact, position) {
   console.log(`[Followups] ${job.type} pos=${position} sent to ${job.contactId}: "${hookText.slice(0, 80)}"`);
 }
 
+// ─── Email Stop / Defer Guards ────────────────────────────────────────────────
+
+/**
+ * Permanently stop email for this contact?
+ * Returns { stop: true, reason } if booked or has Disable AI tag.
+ */
+function shouldStopEmail(contactId) {
+  const contact = conversations.get(contactId);
+  if (!contact) return { stop: true, reason: 'Contact not found' };
+  if (contact.booked) return { stop: true, reason: 'Already booked' };
+  const tags = (contact.tags || []).map(t => t.toLowerCase());
+  if (tags.includes('disable ai')) return { stop: true, reason: 'Has Disable AI tag' };
+  return { stop: false };
+}
+
+/**
+ * Defer email because the lead is actively texting us?
+ * Returns true if the most recent inbound SMS exchange was within the last 4 hours.
+ */
+function shouldDeferEmail(contactId) {
+  const contact = conversations.get(contactId);
+  if (!contact) return false;
+  const exchanges = contact.exchanges || [];
+  const lastInbound = [...exchanges].reverse().find(e => e.direction === 'inbound');
+  if (!lastInbound) return false;
+  const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+  return (lastInbound.timestamp || 0) > fourHoursAgo;
+}
+
+// ─── Email Message Generation ─────────────────────────────────────────────────
+
+/**
+ * Generate a subject + body for an email follow-up using Claude.
+ * Returns { subject, body } or a static fallback on failure.
+ */
+async function generateEmailMessage(contact, position, jobType, contactId) {
+  const isMonthly = position >= 9;
+  const isNurture = jobType === 'email-nurture' || (position >= 5 && !isMonthly);
+  const promptName = isMonthly ? 'email.monthly' : (isNurture ? 'email.nurture' : 'email.hook');
+
+  const rawTemplate = prompts.get(promptName);
+  const conversationHistory = formatConversationHistory(contact.exchanges || []);
+  const enrichment = await fetchEnrichments(contactId, contact.researchData || null);
+  const enrichmentContext = formatEnrichmentContext(enrichment);
+
+  const practiceName = contact.practiceName ? ` at ${contact.practiceName}` : '';
+
+  const userPrompt = interpolate(rawTemplate, {
+    firstName: contact.firstName || 'there',
+    practiceName,
+    position,
+    conversationHistory,
+    enrichmentContext
+  });
+
+  const systemPrompt = prompts.get('email.system');
+
+  try {
+    const response = await getAI().messages.create({
+      model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-5',
+      max_tokens: 400,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }]
+    });
+
+    const raw = response.content[0]?.text?.trim() || '';
+    const parsed = JSON.parse(raw);
+    if (parsed.subject && parsed.body) return parsed;
+    throw new Error('Missing subject or body in Claude response');
+  } catch (err) {
+    console.error(`[Followups] Email generation error for ${contactId}:`, err.message);
+    return {
+      subject: 'Quick note',
+      body: `Hi ${contact.firstName || 'there'} — wanted to follow up and see if now's a better time to connect.`
+    };
+  }
+}
+
+// ─── Email Sequence Progression ───────────────────────────────────────────────
+
+/**
+ * Schedule the next email in the sequence after one has been sent.
+ *
+ * Cadence (days after sent):
+ *   pos 1 → 2: +2d  (day 2)
+ *   pos 2 → 3: +2d  (day 4)
+ *   pos 3 → 4: +3d  (day 7)
+ *   pos 4 → 5: +7d  (week 2)
+ *   pos 5–8:   +7d each (weekly)
+ *   pos 9+:    +30d (monthly indefinitely)
+ */
+function scheduleEmailNext(contactId, sentPosition, tz) {
+  const DAY = 24 * 60 * 60 * 1000;
+  let daysOut;
+  let nextType;
+
+  if (sentPosition === 1) {
+    daysOut = 2; nextType = 'email-hook';
+  } else if (sentPosition === 2) {
+    daysOut = 2; nextType = 'email-hook';
+  } else if (sentPosition === 3) {
+    daysOut = 3; nextType = 'email-hook';
+  } else if (sentPosition === 4) {
+    daysOut = 7; nextType = 'email-nurture';
+  } else if (sentPosition >= 5 && sentPosition < 9) {
+    daysOut = 7; nextType = 'email-nurture';
+  } else {
+    daysOut = 30; nextType = 'email-nurture';
+  }
+
+  const sendAt = nextEmailWindowMs(Date.now() + daysOut * DAY, tz || DEFAULT_TZ);
+  scheduleJob({
+    contactId,
+    type:     nextType,
+    position: sentPosition + 1,
+    sendAt,
+    context:  { timezone: tz || DEFAULT_TZ }
+  });
+}
+
+// ─── Email Job Processor ──────────────────────────────────────────────────────
+
+async function processEmailJob(job) {
+  const tz = job.context?.timezone || getContactTimezone(job.contactId);
+
+  // 1. Permanent stop check (booked or Disable AI tag)
+  const stopCheck = shouldStopEmail(job.contactId);
+  if (stopCheck.stop) {
+    updateJob(job.id, { status: 'cancelled', error: stopCheck.reason });
+    console.log(`[Followups] Email ${job.type} pos=${job.position} for ${job.contactId}: stopped — ${stopCheck.reason}`);
+    return;
+  }
+
+  // 2. Defer if lead is actively texting (last inbound within 4 hours)
+  if (shouldDeferEmail(job.contactId)) {
+    const deferTo = nextEmailWindowMs(Date.now() + 4 * 60 * 60 * 1000, tz);
+    updateJob(job.id, { sendAt: deferTo });
+    console.log(`[Followups] Email ${job.type} pos=${job.position} for ${job.contactId}: active conversation — deferring to ${new Date(deferTo).toISOString()}`);
+    return;
+  }
+
+  // 3. Defer if outside email window
+  if (!isInEmailWindow(Date.now(), tz)) {
+    const nextWindow = nextEmailWindowMs(Date.now(), tz);
+    updateJob(job.id, { sendAt: nextWindow });
+    console.log(`[Followups] Email ${job.type} pos=${job.position} for ${job.contactId}: outside email window — deferring to ${new Date(nextWindow).toISOString()}`);
+    return;
+  }
+
+  // 4. Check contact has email on file
+  const contact = conversations.get(job.contactId);
+  if (!contact?.email) {
+    updateJob(job.id, { status: 'skipped', error: 'No email on file' });
+    console.log(`[Followups] Email ${job.type} pos=${job.position} for ${job.contactId}: skipped — no email on file`);
+    return;
+  }
+
+  // 5. Generate email content
+  let emailContent;
+  try {
+    emailContent = await generateEmailMessage(contact, job.position, job.type, job.contactId);
+  } catch (err) {
+    console.error(`[Followups] Email generation failed for ${job.contactId}:`, err.message);
+    updateJob(job.id, { status: 'skipped', error: err.message });
+    return;
+  }
+
+  // 6. Send via GHL
+  let sendResult;
+  try {
+    sendResult = await ghl.sendEmail(job.contactId, emailContent.subject, emailContent.body);
+  } catch (err) {
+    console.error(`[Followups] GHL email send error for ${job.contactId}:`, err.message);
+    updateJob(job.id, { status: 'skipped', error: `GHL: ${err.message}` });
+    return;
+  }
+
+  if (!sendResult) {
+    updateJob(job.id, { status: 'skipped', error: 'GHL returned null (email send failed)' });
+    return;
+  }
+
+  // 7. Record exchange and schedule next
+  conversations.addExchange(job.contactId, {
+    direction: 'outbound',
+    body: `[Email] ${emailContent.subject}: ${emailContent.body}`,
+    step: contact.currentStep ?? null,
+    conversationId: null,
+    type: `email-pos${job.position}`
+  });
+
+  updateJob(job.id, { status: 'sent', sentAt: Date.now() });
+  scheduleEmailNext(job.contactId, job.position, tz);
+
+  console.log(`[Followups] Email pos=${job.position} sent to ${job.contactId}: "${emailContent.subject}"`);
+}
+
 // ─── Job Processors ───────────────────────────────────────────────────────────
 
 async function processSilenceCheck(job) {
@@ -537,6 +780,29 @@ async function processSilenceCheck(job) {
 
   console.log(`[Followups] Silence check for ${job.contactId}: silent — sending Hook 1 (static)`);
   await sendHook1Static(job, contact);
+
+  // Schedule Email #1 in parallel (next available email window)
+  const tags = (contact.tags || []).map(t => t.toLowerCase());
+  const hasDisableAI = tags.includes('disable ai');
+  if (contact.email && !hasDisableAI && !contact.booked) {
+    const tz = job.context?.timezone || getContactTimezone(job.contactId);
+    const emailSendAt = nextEmailWindowMs(Date.now(), tz);
+    // Avoid duplicate: skip if a pending email-hook pos=1 already exists for this contact
+    const existing = load().some(
+      j => j.contactId === job.contactId && j.type === 'email-hook' &&
+           j.position === 1 && j.status === 'pending'
+    );
+    if (!existing) {
+      scheduleJob({
+        contactId: job.contactId,
+        type:      'email-hook',
+        position:  1,
+        sendAt:    emailSendAt,
+        context:   { timezone: tz }
+      });
+      console.log(`[Followups] Email #1 scheduled for ${job.contactId} at ${new Date(emailSendAt).toISOString()}`);
+    }
+  }
 }
 
 async function processHookOrNurture(job) {
@@ -565,6 +831,8 @@ async function processHookOrNurture(job) {
 async function processJob(job) {
   if (job.type === 'silence-check') {
     await processSilenceCheck(job);
+  } else if (job.type === 'email-hook' || job.type === 'email-nurture') {
+    await processEmailJob(job);
   } else {
     await processHookOrNurture(job);
   }
@@ -628,5 +896,8 @@ module.exports = {
   drainJobs,
   estimateTimezone,
   isInWindow,
-  nextWindowMs
+  nextWindowMs,
+  nextEmailWindowMs,
+  scheduleEmailNext,
+  scheduleJob
 };

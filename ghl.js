@@ -132,4 +132,30 @@ async function fetchContactsByTag(tag) {
   }
 }
 
-module.exports = { fetchContact, fetchMessages, sendMessage, getOrCreateConversation, fetchContactsByTag };
+async function sendEmail(contactId, subject, body) {
+  try {
+    const payload = {
+      type: 'Email',
+      contactId,
+      subject,
+      body
+    };
+    const res = await fetch(`${BASE}/conversations/messages`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`GHL email send ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    console.log(`[GHL] Email sent to contact ${contactId}: "${subject}"`);
+    return data;
+  } catch (err) {
+    console.error('[GHL] sendEmail error:', err.message);
+    return null;
+  }
+}
+
+module.exports = { fetchContact, fetchMessages, sendMessage, sendEmail, getOrCreateConversation, fetchContactsByTag };

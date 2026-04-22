@@ -59,6 +59,27 @@ const PROMPT_META = [
     name: 'brain.analysisPrompt',
     label: 'Learning Brain Analysis Prompt',
     description: 'Sent to Claude during the 72-hour learning brain analysis job. Receives reply-rate and booking-rate statistics per stage and message cluster, and should return actionable messaging insights. Insights are stored in winning-patterns.json and injected into conversation prompts.'
+  },
+  {
+    name: 'email.system',
+    label: 'Email Generator System Role',
+    description: 'The system role given to Claude when generating email follow-ups. Defines persona, style, and output format. Must instruct Claude to return JSON { "subject": "...", "body": "..." } only.',
+    sectionLabel: 'Email Prompts'
+  },
+  {
+    name: 'email.hook',
+    label: 'Email Hook (First-Week Emails, Positions 1–4)',
+    description: 'Prompt for AI-generated emails during the first week (positions 1–4). Must return JSON { "subject": "...", "body": "..." }. Body: 1–2 casual sentences, no paragraphs, no greetings or sign-offs.'
+  },
+  {
+    name: 'email.nurture',
+    label: 'Email Nurture (Weekly, Positions 5–8)',
+    description: 'Prompt for weekly nurture emails (positions 5–8). Must return JSON { "subject": "...", "body": "..." }. Body: 1–2 casual sentences.'
+  },
+  {
+    name: 'email.monthly',
+    label: 'Email Monthly (Position 9+)',
+    description: 'Prompt for monthly long-arc emails (positions 9+). Must return JSON { "subject": "...", "body": "..." }. Body: 1–2 casual sentences, fresh angle each time.'
   }
 ];
 
@@ -70,6 +91,44 @@ const DEFAULTS = {
   'followup.hook': config.followUpPrompts?.hook || '',
   'followup.nurture': config.followUpPrompts?.nurture || '',
   'followup.system': 'You are a sales text-message copywriter. Return ONLY the message text — no quotes, no preamble, no explanation.',
+  'email.system': 'You are a sales assistant emailing audiology practice owners on behalf of Powered Up AI. Your emails are extremely short — 1 to 2 sentences max, no paragraphs, no greetings, no formal sign-offs. Write like a quick note from someone who already knows their situation. Always return valid JSON only: {"subject": "...", "body": "..."}. No preamble, no explanation, no markdown.',
+
+  'email.hook': `Write a short follow-up email to {{firstName}}{{practiceName}}.
+
+This is email #{{position}} in our outreach sequence. Their conversation history with us:
+{{conversationHistory}}
+
+{{enrichmentContext}}
+
+Write 1–2 sentences max. Reference something real and specific about their practice or situation. Create enough curiosity that they reply. No greetings, no sign-off, no "Hope this finds you well." Mention a specific gap or opportunity (dormant patients, expiring benefits, competitors gaining ground) if supported by the data.
+
+Return ONLY this JSON, nothing else:
+{"subject": "...", "body": "..."}`,
+
+  'email.nurture': `Write a short nurture email to {{firstName}}{{practiceName}}.
+
+This is email #{{position}} — they haven't responded yet. Their conversation history:
+{{conversationHistory}}
+
+{{enrichmentContext}}
+
+Write 1–2 sentences. Try a different angle than what was already sent — a competitor gaining ground, a recent patient review, expiring insurance benefits, or a nearby referral source. Be specific where data allows. No greetings, no sign-off, no "just checking in."
+
+Return ONLY this JSON, nothing else:
+{"subject": "...", "body": "..."}`,
+
+  'email.monthly': `Write a monthly check-in email to {{firstName}}{{practiceName}}.
+
+They haven't engaged in a while. Conversation history:
+{{conversationHistory}}
+
+{{enrichmentContext}}
+
+Write 1–2 sentences. Take a fresh angle — something that feels new, not repetitive. Reference real data if available (recent reviews, a competitor milestone, year-end benefits). Easy to reply to with a simple yes or no.
+
+Return ONLY this JSON, nothing else:
+{"subject": "...", "body": "..."}`,
+
   'brain.analysisPrompt': `You are an AI sales coach analyzing performance data from an audiology practice outreach campaign.
 
 You have been given reply-rate and booking-rate statistics for outbound SMS messages, grouped by conversation stage and message pattern cluster.

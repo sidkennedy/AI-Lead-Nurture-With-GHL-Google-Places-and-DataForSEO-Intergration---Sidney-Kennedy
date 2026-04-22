@@ -12,7 +12,7 @@ const fs   = require('fs');
 
 const ghl           = require('./ghl');
 const conversations = require('./conversations');
-const { nextWindowMs, estimateTimezone } = require('./followups');
+const { nextWindowMs, nextEmailWindowMs, estimateTimezone } = require('./followups');
 
 const FOLLOWUPS_FILE = path.join(__dirname, 'data', 'followups.json');
 
@@ -277,6 +277,7 @@ async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } 
     const firstName = ghlContact.firstName || ghlContact.name || '—';
     const phone     = ghlContact.phone     || '—';
     const city      = ghlContact.city      || ghlContact.address?.city || '';
+    const email     = ghlContact.email     || '';
     const tags      = (ghlContact.tags || []).map(t =>
       (typeof t === 'string' ? t : (t.name || '')).toLowerCase()
     );
@@ -345,7 +346,7 @@ async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } 
       row.reason   = analysis.reasoning;
 
       if (!dryRun) {
-        conversations.ensureContact(contactId, { firstName, city, phone });
+        conversations.ensureContact(contactId, { firstName, city, phone, email, tags });
 
         const fresh = conversations.get(contactId);
         if (!fresh?.exchanges?.length && ghlMessages.length > 0) {
@@ -355,7 +356,7 @@ async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } 
           }
         }
 
-        conversations.update(contactId, { currentStep: analysis.currentStep });
+        conversations.update(contactId, { currentStep: analysis.currentStep, email, tags });
 
         scheduleJob({
           contactId,
@@ -369,6 +370,24 @@ async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } 
             enrolledFromScript: true
           }
         });
+
+        // Schedule email-hook position 2 in parallel if the contact has an email
+        if (email && !tags.includes('disable ai')) {
+          const emailSendAt = nextEmailWindowMs(sendAt, tz);
+          const allJobs = loadFollowupJobs();
+          const hasPendingEmail = allJobs.some(
+            j => j.contactId === contactId && j.type.startsWith('email-') && j.status === 'pending'
+          );
+          if (!hasPendingEmail) {
+            scheduleJob({
+              contactId,
+              type:     'email-hook',
+              position: 2,
+              sendAt:   emailSendAt,
+              context:  { timezone: tz, enrolledFromScript: true }
+            });
+          }
+        }
 
         await sleep(delayMs);
       }
