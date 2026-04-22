@@ -262,9 +262,9 @@ async function runEnrollment({ tag = 'amplify', dryRun = true, delayMs = 2000 } 
     throw new Error(`Missing required environment variable(s): ${missingEnv.join(', ')}`);
   }
 
-  const ghlContacts = await ghl.fetchContactsByTag(tag);
+  const { contacts: ghlContacts, totalScanned } = await ghl.fetchContactsByTag(tag);
 
-  const stats = { total: ghlContacts.length, enrolled: 0, skipped: 0, errors: 0 };
+  const stats = { total: ghlContacts.length, scanned: totalScanned, enrolled: 0, skipped: 0, errors: 0 };
   const rows  = [];
 
   const DAY = 24 * 60 * 60 * 1000;

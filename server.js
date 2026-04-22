@@ -1935,12 +1935,17 @@ function setBusy(busy) {
 function renderStats(stats, dryRun) {
   const panel = document.getElementById('stats-panel');
   panel.style.display = '';
+  const scannedNote = stats.scanned != null ? \`<div class="stat-box"><div class="val" style="color:#888">\${stats.scanned}</div><div class="lbl">Contacts Scanned</div></div>\` : '';
   document.getElementById('stat-grid').innerHTML = \`
-    <div class="stat-box"><div class="val">\${stats.total}</div><div class="lbl">Found</div></div>
+    \${scannedNote}
+    <div class="stat-box"><div class="val">\${stats.total}</div><div class="lbl">Matched Tag</div></div>
     <div class="stat-box"><div class="val" style="color:#4ade80">\${stats.enrolled}</div><div class="lbl">\${dryRun ? 'Would Enroll' : 'Enrolled'}</div></div>
     <div class="stat-box"><div class="val" style="color:#888">\${stats.skipped}</div><div class="lbl">Skipped</div></div>
     <div class="stat-box"><div class="val" style="color:#f87171">\${stats.errors}</div><div class="lbl">Errors</div></div>
   \`;
+  if (stats.total === 0 && stats.scanned > 0) {
+    setStatus(\`No contacts matched the tag "\${document.getElementById('tag-input').value.trim() || 'amplify'}". Check the tag name — it must match exactly (case-insensitive) the tag on your GHL contacts.\`, true);
+  }
 }
 
 function badgeFor(action) {
@@ -2005,8 +2010,10 @@ async function doPreview() {
     lastRows = data.rows || [];
     renderStats(data.stats, true);
     renderRows(data.rows, true);
-    setStatus('Dry-run complete. Review the table, then click Run Enrollment to commit.');
-    document.getElementById('btn-run').disabled = false;
+    if (data.stats.total > 0) {
+      setStatus('Dry-run complete. Review the table, then click Run Enrollment to commit.');
+    }
+    document.getElementById('btn-run').disabled = (data.stats.total === 0);
   } catch (err) {
     setStatus('Error: ' + err.message, true);
   } finally {
