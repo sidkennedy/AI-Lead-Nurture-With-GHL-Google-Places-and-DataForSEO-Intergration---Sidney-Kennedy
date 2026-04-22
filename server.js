@@ -1228,7 +1228,10 @@ app.get('/admin/prompts', (req, res) => {
   }
   const all = prompts.listAll();
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   res.send(buildPromptEditorPage(key, all));
 });
 
@@ -1266,11 +1269,16 @@ app.get('/admin/enroll', (req, res) => {
     return res.status(401).send('Unauthorized. Add ?key=YOUR_ADMIN_KEY to the URL.');
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   res.send(buildEnrollPage(key));
 });
 
 app.post('/api/enroll/run', requireAdmin, async (req, res) => {
-  const tag    = typeof req.body.tag === 'string' && req.body.tag.trim() ? req.body.tag.trim() : 'amplify';
+  const tag    = typeof req.body.tag === 'string' && req.body.tag.trim() ? req.body.tag.trim() : '';
+  if (!tag) return res.status(400).json({ ok: false, error: 'Tag is required.' });
   const dryRun = req.body.dryRun !== false && req.body.dryRun !== 'false';
   try {
     const result = await runEnrollment({ tag, dryRun, delayMs: 1500 });
@@ -1663,6 +1671,9 @@ function buildPromptEditorPage(adminKey, promptsList) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Prompt Editor — Powered Up AI</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f0f0f;color:#e8e8e8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:40px 16px 80px}
@@ -1722,7 +1733,9 @@ textarea:focus{border-color:#4263eb}
 <div class="page-header">
   <h1>Prompt Editor</h1>
   <p class="subtitle">View and edit every AI prompt. Changes take effect immediately — no restart needed.</p>
-  <p style="font-size:11px;color:#444;margin-top:8px">Page loaded: ${new Date().toLocaleString()}</p>
+  <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
+    BUILD v3 · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+  </div>
 </div>
 <div id="prompts"></div>
 
@@ -1880,6 +1893,9 @@ function buildEnrollPage(adminKey) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lead Enrollment — Powered Up AI</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{background:#0f0f0f;color:#e8e8e8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:40px 16px 80px}
@@ -1922,13 +1938,16 @@ tr:last-child td{border-bottom:none}
 <div style="text-align:center;max-width:1080px;margin:0 auto 40px">
   <h1>Lead Enrollment</h1>
   <p class="subtitle">Preview and enroll GHL contacts into the follow-up sequence.<br>Run a dry-run first to see what will happen, then click Run Enrollment to commit.</p>
+  <div style="display:inline-block;margin-top:12px;padding:6px 14px;background:#1e3a8a;color:#93c5fd;font-size:12px;font-weight:700;border-radius:20px;letter-spacing:.04em">
+    BUILD v3 · LOADED ${new Date().toISOString().replace('T',' ').slice(0,19)} UTC
+  </div>
 </div>
 
 <div class="panel">
   <div class="panel-title">Controls <a href="/admin?key=${adminKey}">&larr; Dashboard</a></div>
   <div class="controls">
     <label for="tag-input">Tag</label>
-    <input type="text" id="tag-input" value="amplify" placeholder="amplify">
+    <input type="text" id="tag-input" value="" placeholder="enter your GHL tag name">
     <button class="btn-preview" id="btn-preview" onclick="doPreview()">Preview (Dry Run)</button>
     <button class="btn-run" id="btn-run" onclick="doRun()" disabled>Run Enrollment</button>
   </div>
@@ -1975,7 +1994,7 @@ function renderStats(stats, dryRun) {
     <div class="stat-box"><div class="val" style="color:#f87171">\${stats.errors}</div><div class="lbl">Errors</div></div>
   \`;
   if (stats.total === 0 && stats.scanned > 0) {
-    setStatus(\`No contacts matched the tag "\${document.getElementById('tag-input').value.trim() || 'amplify'}". Check the tag name — it must match exactly (case-insensitive) the tag on your GHL contacts.\`, 'warn');
+    setStatus(\`No contacts matched the tag "\${document.getElementById('tag-input').value.trim()}". Check the tag name — it must match exactly (case-insensitive) the tag on your GHL contacts.\`, 'warn');
   }
 }
 
@@ -2023,7 +2042,8 @@ function esc(s) {
 }
 
 async function doPreview() {
-  const tag = document.getElementById('tag-input').value.trim() || 'amplify';
+  const tag = document.getElementById('tag-input').value.trim();
+  if (!tag) { setStatus('Please enter a GHL tag name first.', 'err'); return; }
   setBusy(true);
   setStatus('Running dry-run preview\u2026');
   document.getElementById('stats-panel').style.display = 'none';
