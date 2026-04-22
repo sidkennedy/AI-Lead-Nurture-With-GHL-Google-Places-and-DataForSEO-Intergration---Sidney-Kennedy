@@ -607,7 +607,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   }
 
   // ── 6. Call Claude ────────────────────────────────────────────────────────────
-  const model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-5';
+  const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
   const response = await anthropic.messages.create({
     model,
     max_tokens: 512,
@@ -998,7 +998,7 @@ app.post('/api/generate', async (req, res) => {
   }
 
   try {
-    const model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-5';
+    const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
     const response = await anthropic.messages.create({
       model,
       max_tokens: 512,

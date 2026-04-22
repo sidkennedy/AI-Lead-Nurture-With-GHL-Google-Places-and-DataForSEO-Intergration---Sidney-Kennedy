@@ -431,7 +431,7 @@ async function generateHookMessage(contact, position, jobType, contactId) {
   const systemPrompt = prompts.get('followup.system');
 
   const response = await getAI().messages.create({
-    model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-5',
+    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
     max_tokens: 200,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }]
@@ -636,7 +636,7 @@ async function generateEmailMessage(contact, position, jobType, contactId) {
 
   try {
     const response = await getAI().messages.create({
-      model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-5',
+      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
       max_tokens: 400,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }]

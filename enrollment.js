@@ -141,7 +141,7 @@ Rules:
 
   try {
     const res = await getAI().messages.create({
-      model:      process.env.ANTHROPIC_MODEL || 'claude-opus-4-5',
+      model:      process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
       max_tokens: 300,
       messages:   [{ role: 'user', content: prompt }]
     });
