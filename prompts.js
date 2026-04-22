@@ -22,10 +22,8 @@ const config = require('./config');
 
 const FILE = path.join(__dirname, 'data', 'prompts.json');
 
-// ─── Prompt Version ───────────────────────────────────────────────────────────
-// Bump this when the conversationPrompt default changes significantly so the
-// stored version is automatically replaced on next server start.
-const CONVERSATION_PROMPT_VERSION = 6;
+// UI edits are always authoritative — the code default only applies when no
+// override has been saved. There is no version-wipe mechanism.
 
 // ─── Default Prompt Definitions ───────────────────────────────────────────────
 
@@ -228,40 +226,25 @@ function listAll() {
 /**
  * Seed prompts.json on startup.
  * - Creates the file if missing.
- * - Removes stale hook1/hook2/hook3 keys (replaced by followup.hook).
- * - If conversationPrompt version in storage is older than CONVERSATION_PROMPT_VERSION,
- *   clears the stored override so the new default takes effect immediately.
+ * - Removes stale legacy prompt keys.
+ * UI-saved overrides are never touched — they are always authoritative.
  */
 function seed() {
   ensureDir();
 
-  const stored = load();
-  let changed = false;
-
   // Remove legacy hook prompt keys no longer in use
-  const legacyKeys = ['followup.hook1', 'followup.hook2', 'followup.hook3'];
-  for (const key of legacyKeys) {
-    if (key in stored) {
-      delete stored[key];
-      changed = true;
-      console.log(`[Prompts] Removed legacy prompt key: ${key}`);
+  if (fs.existsSync(FILE)) {
+    const stored = load();
+    const legacyKeys = ['followup.hook1', 'followup.hook2', 'followup.hook3', '_conversationPromptVersion'];
+    const hadLegacy = legacyKeys.some(k => k in stored);
+    if (hadLegacy) {
+      for (const key of legacyKeys) delete stored[key];
+      save(stored);
+      console.log('[Prompts] Removed legacy prompt keys from prompts.json');
     }
-  }
-
-  // Force-update conversationPrompt if stored version is outdated
-  const storedVersion = stored['_conversationPromptVersion'] || 0;
-  if (storedVersion < CONVERSATION_PROMPT_VERSION) {
-    delete stored['conversationPrompt'];
-    stored['_conversationPromptVersion'] = CONVERSATION_PROMPT_VERSION;
-    changed = true;
-    console.log(`[Prompts] conversationPrompt updated to v${CONVERSATION_PROMPT_VERSION} — stored override cleared`);
-  }
-
-  if (!fs.existsSync(FILE)) {
-    fs.writeFileSync(FILE, JSON.stringify({ _conversationPromptVersion: CONVERSATION_PROMPT_VERSION }, null, 2));
+  } else {
+    fs.writeFileSync(FILE, JSON.stringify({}, null, 2));
     console.log('[Prompts] data/prompts.json created (no overrides; all defaults active)');
-  } else if (changed) {
-    save(stored);
   }
 }
 
