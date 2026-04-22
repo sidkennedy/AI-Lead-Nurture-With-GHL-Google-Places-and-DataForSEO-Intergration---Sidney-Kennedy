@@ -708,12 +708,20 @@ async function generateEmailMessage(contact, position, jobType, contactId) {
 
   const practiceName = contact.practiceName ? ` at ${contact.practiceName}` : '';
 
+  // Inject email-specific winning patterns from the learning brain
+  const stage = brain.classifyStage(contact.currentStep ?? null);
+  const emailPatterns = brain.getWinningPatterns(stage, 'email');
+  const winningPatterns = (emailPatterns && emailPatterns.length > 0)
+    ? `Email subject lines and openers that have generated replies: ${emailPatterns.slice(0, 2).map(p => `"${(p.example || '').slice(0, 80)}"`).join(' | ')}. Lean toward similar energy.`
+    : '';
+
   const userPrompt = interpolate(rawTemplate, {
     firstName: contact.firstName || 'there',
     practiceName,
     position,
     conversationHistory,
-    enrichmentContext
+    enrichmentContext,
+    winningPatterns
   });
 
   const systemPrompt = prompts.get('email.system');

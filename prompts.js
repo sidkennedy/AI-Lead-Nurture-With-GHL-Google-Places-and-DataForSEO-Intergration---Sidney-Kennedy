@@ -97,6 +97,7 @@ This is email #{{position}} in our outreach sequence. Their conversation history
 {{conversationHistory}}
 
 {{enrichmentContext}}
+{{winningPatterns}}
 
 Write 1–2 sentences max. Reference something real and specific about their practice or situation. Create enough curiosity that they reply. No greetings, no sign-off, no "Hope this finds you well." Mention a specific gap or opportunity (dormant patients, expiring benefits, competitors gaining ground) if supported by the data.
 
@@ -109,6 +110,7 @@ This is email #{{position}} — they haven't responded yet. Their conversation h
 {{conversationHistory}}
 
 {{enrichmentContext}}
+{{winningPatterns}}
 
 Write 1–2 sentences. Try a different angle than what was already sent — a competitor gaining ground, a recent patient review, expiring insurance benefits, or a nearby referral source. Be specific where data allows. No greetings, no sign-off, no "just checking in."
 
@@ -121,6 +123,7 @@ They haven't engaged in a while. Conversation history:
 {{conversationHistory}}
 
 {{enrichmentContext}}
+{{winningPatterns}}
 
 Write 1–2 sentences. Take a fresh angle — something that feels new, not repetitive. Reference real data if available (recent reviews, a competitor milestone, year-end benefits). Easy to reply to with a simple yes or no.
 
