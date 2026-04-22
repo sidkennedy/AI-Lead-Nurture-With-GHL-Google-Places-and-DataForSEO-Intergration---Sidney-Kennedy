@@ -28,7 +28,13 @@ async function fetchMessages(conversationId, limit = 100) {
     );
     if (!res.ok) throw new Error(`GHL messages fetch ${res.status}`);
     const data = await res.json();
-    return data.messages || [];
+    // GHL API can return messages as a direct array OR nested inside an object
+    let msgs = data.messages;
+    if (msgs && !Array.isArray(msgs)) {
+      // e.g. { messages: { messages: [...], lastMessageId: '...' } }
+      msgs = msgs.messages || msgs.data || [];
+    }
+    return Array.isArray(msgs) ? msgs : [];
   } catch (err) {
     console.error('[GHL] fetchMessages error:', err.message);
     return [];

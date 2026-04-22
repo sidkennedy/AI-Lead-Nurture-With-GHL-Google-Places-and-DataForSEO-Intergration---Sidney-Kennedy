@@ -420,7 +420,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
 // ─── Message History Builders ─────────────────────────────────────────────────
 
 function buildMessagesFromGhl(ghlMessages) {
-  if (!ghlMessages || ghlMessages.length === 0) return [];
+  if (!ghlMessages || !Array.isArray(ghlMessages) || ghlMessages.length === 0) return [];
 
   const mapped = ghlMessages
     .filter(m => m.body || m.message)
