@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('./config');
+const prompts = require('./prompts');
 const conversations = require('./conversations');
 const ghl = require('./ghl');
 const brain = require('./brain');
@@ -194,13 +195,12 @@ function interpolate(template, vars) {
 // ─── Hook Message Generation ──────────────────────────────────────────────────
 
 async function generateHookMessage(contact, position, jobType) {
-  const templates = config.followUpPrompts || {};
-  let key = 'hook1';
-  if (position === 2) key = 'hook2';
-  else if (position === 3) key = 'hook3';
-  else if (jobType === 'nurture' || position >= 4) key = 'nurture';
+  let promptName = 'followup.hook1';
+  if (position === 2) promptName = 'followup.hook2';
+  else if (position === 3) promptName = 'followup.hook3';
+  else if (jobType === 'nurture' || position >= 4) promptName = 'followup.nurture';
 
-  const rawTemplate = templates[key] || templates.hook1 || '';
+  const rawTemplate = prompts.get(promptName);
   const stage = brain.classifyStage(contact.currentStep ?? null);
 
   const userPrompt = interpolate(rawTemplate, {
@@ -211,7 +211,7 @@ async function generateHookMessage(contact, position, jobType) {
     lastReply: contact.lastReply || 'none'
   });
 
-  let systemPrompt = 'You are a sales text-message copywriter. Return ONLY the message text — no quotes, no preamble, no explanation.';
+  let systemPrompt = prompts.get('followup.system');
   const patterns = brain.getWinningPatterns(stage);
   if (patterns && patterns.length > 0) {
     const examples = patterns.slice(0, 2).map(p => `"${(p.example || '').slice(0, 80)}"`).join(' | ');

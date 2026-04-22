@@ -19,6 +19,7 @@ const { runResearch } = require('./research');
 const { startScan } = require('./scanner');
 const brain = require('./brain');
 const followups = require('./followups');
+const prompts = require('./prompts');
 
 const app = express();
 app.use(express.json());
@@ -234,7 +235,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   }
 
   // ── 5. Build system prompt with live data + winning patterns ─────────────────
-  let systemContent = config.conversationPrompt;
+  let systemContent = prompts.get('conversationPrompt');
 
   if (resolvedFirstName || fresh?.firstName) {
     systemContent += `\n\nPROSPECT FIRST NAME: ${resolvedFirstName || fresh?.firstName}`;
@@ -520,7 +521,7 @@ app.post('/api/generate', async (req, res) => {
     const response = await anthropic.messages.create({
       model,
       max_tokens: 512,
-      system: config.systemPrompt,
+      system: prompts.get('systemPrompt'),
       messages: [{ role: 'user', content: userMessage }]
     });
 
@@ -629,6 +630,41 @@ app.get('/api/followups/:contactId', requireAdmin, (req, res) => {
   res.json(jobs.sort((a, b) => b.createdAt - a.createdAt));
 });
 
+// ─── Admin: Prompt Editor ─────────────────────────────────────────────────────
+
+app.get('/admin/prompts', (req, res) => {
+  const key = req.query.key || req.headers['x-admin-key'];
+  if (key !== process.env.ADMIN_KEY) {
+    if (!process.env.ADMIN_KEY) return res.status(503).send('ADMIN_KEY not configured');
+    return res.status(401).send('Invalid admin key. Add ?key=YOUR_ADMIN_KEY to the URL.');
+  }
+  const all = prompts.listAll();
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(buildPromptEditorPage(key, all));
+});
+
+app.post('/api/admin/prompts/:name', requireAdmin, (req, res) => {
+  const { name } = req.params;
+  const { text } = req.body;
+  if (typeof text !== 'string') return res.status(400).json({ error: 'text field required' });
+  try {
+    prompts.set(name, text);
+    res.json({ ok: true, name, length: text.length });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/prompts/:name/reset', requireAdmin, (req, res) => {
+  const { name } = req.params;
+  try {
+    prompts.reset(name);
+    res.json({ ok: true, name, text: prompts.getDefault(name) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
@@ -709,6 +745,170 @@ if(stats.totalPoints>0){
     \${stats.averageRankWhereVisible?\`<div class="stat-row"><span class="dot" style="background:#888"></span><span class="stat-label">Avg rank where visible</span><span class="stat-value">#\${stats.averageRankWhereVisible}</span></div>\`:''}
   </div>\`;
 }
+</script>
+</body>
+</html>`;
+}
+
+// ─── Admin Prompt Editor Page ─────────────────────────────────────────────────
+
+function buildPromptEditorPage(adminKey, promptsList) {
+  const promptsJson = JSON.stringify(promptsList.map(p => ({
+    name: p.name,
+    label: p.label,
+    description: p.description,
+    current: p.current,
+    isModified: p.isModified,
+    defaultValue: p.defaultValue
+  })));
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prompt Editor — Powered Up AI</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f0f0f;color:#e8e8e8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:40px 16px 80px}
+.logo{font-size:13px;font-weight:600;letter-spacing:.08em;color:#555;text-transform:uppercase;text-align:center;margin-bottom:40px}
+h1{font-size:22px;font-weight:700;color:#fff;text-align:center;margin-bottom:8px}
+.subtitle{font-size:14px;color:#666;text-align:center;margin-bottom:40px;line-height:1.5}
+.prompt-card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:28px 28px 24px;width:100%;max-width:820px;margin:0 auto 24px}
+.prompt-card.modified{border-color:#3b5bdb44}
+.prompt-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.prompt-label{font-size:15px;font-weight:600;color:#fff;line-height:1.3}
+.badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap;flex-shrink:0}
+.badge-modified{background:#3b5bdb22;color:#748ffc;border:1px solid #3b5bdb44}
+.badge-default{background:#1e1e1e;color:#555;border:1px solid #2a2a2a}
+.prompt-desc{font-size:13px;color:#666;margin-bottom:14px;line-height:1.5}
+textarea{width:100%;background:#111;border:1px solid #2a2a2a;border-radius:10px;color:#e8e8e8;font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',monospace;font-size:12.5px;line-height:1.6;padding:14px 16px;resize:vertical;min-height:220px;outline:none;transition:border-color .15s}
+textarea:focus{border-color:#4263eb}
+.actions{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+.btn{padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s}
+.btn:disabled{opacity:.45;cursor:default}
+.btn-save{background:#4263eb;color:#fff}
+.btn-save:not(:disabled):hover{background:#3b5bdb}
+.btn-reset{background:transparent;color:#888;border:1px solid #333}
+.btn-reset:not(:disabled):hover{color:#e8e8e8;border-color:#555}
+.status{font-size:12px;margin-left:4px}
+.status-ok{color:#22c55e}
+.status-err{color:#ef4444}
+.char-count{font-size:12px;color:#555;margin-left:auto}
+.page-header{text-align:center;max-width:820px;margin:0 auto 40px}
+</style>
+</head>
+<body>
+<div class="logo">Powered Up AI</div>
+<div class="page-header">
+  <h1>Prompt Editor</h1>
+  <p class="subtitle">View and edit every AI prompt. Changes take effect immediately — no restart needed.</p>
+</div>
+<div id="prompts"></div>
+
+<script>
+const ADMIN_KEY = ${JSON.stringify(adminKey)};
+const ALL_PROMPTS = ${promptsJson};
+
+function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
+
+function renderPrompts() {
+  const container = document.getElementById('prompts');
+  container.innerHTML = '';
+  ALL_PROMPTS.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'prompt-card' + (p.isModified ? ' modified' : '');
+    card.id = 'card-' + p.name;
+    card.innerHTML = \`
+      <div class="prompt-header">
+        <div class="prompt-label">\${escapeHtml(p.label)}</div>
+        <span class="badge \${p.isModified ? 'badge-modified' : 'badge-default'}" id="badge-\${p.name}">
+          \${p.isModified ? 'Modified' : 'Default'}
+        </span>
+      </div>
+      <div class="prompt-desc">\${escapeHtml(p.description)}</div>
+      <textarea id="ta-\${p.name}" rows="14" spellcheck="false">\${escapeHtml(p.current)}</textarea>
+      <div class="actions">
+        <button class="btn btn-save" id="save-\${p.name}" onclick="savePrompt(\${JSON.stringify(p.name)})">Save</button>
+        <button class="btn btn-reset" id="reset-\${p.name}" onclick="resetPrompt(\${JSON.stringify(p.name)})" \${p.isModified ? '' : 'disabled'}>Reset to default</button>
+        <span class="status" id="status-\${p.name}"></span>
+        <span class="char-count" id="chars-\${p.name}">\${p.current.length} chars</span>
+      </div>
+    \`;
+    container.appendChild(card);
+    const ta = document.getElementById('ta-' + p.name);
+    ta.addEventListener('input', () => {
+      document.getElementById('chars-' + p.name).textContent = ta.value.length + ' chars';
+    });
+  });
+}
+
+async function savePrompt(name) {
+  const ta = document.getElementById('ta-' + name);
+  const saveBtn = document.getElementById('save-' + name);
+  const resetBtn = document.getElementById('reset-' + name);
+  const statusEl = document.getElementById('status-' + name);
+  saveBtn.disabled = true;
+  statusEl.textContent = 'Saving\u2026';
+  statusEl.className = 'status';
+  try {
+    const res = await fetch('/api/admin/prompts/' + encodeURIComponent(name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
+      body: JSON.stringify({ text: ta.value })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    statusEl.textContent = 'Saved';
+    statusEl.className = 'status status-ok';
+    const p = ALL_PROMPTS.find(x => x.name === name);
+    if (p) { p.current = ta.value; p.isModified = true; }
+    document.getElementById('badge-' + name).textContent = 'Modified';
+    document.getElementById('badge-' + name).className = 'badge badge-modified';
+    document.getElementById('card-' + name).className = 'prompt-card modified';
+    resetBtn.disabled = false;
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+  } catch(err) {
+    statusEl.textContent = 'Error: ' + err.message;
+    statusEl.className = 'status status-err';
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+async function resetPrompt(name) {
+  if (!confirm('Reset "' + name + '" to its hardcoded default? This will discard your edits.')) return;
+  const resetBtn = document.getElementById('reset-' + name);
+  const statusEl = document.getElementById('status-' + name);
+  resetBtn.disabled = true;
+  statusEl.textContent = 'Resetting\u2026';
+  statusEl.className = 'status';
+  try {
+    const res = await fetch('/api/admin/prompts/' + encodeURIComponent(name) + '/reset', {
+      method: 'POST',
+      headers: { 'x-admin-key': ADMIN_KEY }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    const ta = document.getElementById('ta-' + name);
+    ta.value = data.text;
+    document.getElementById('chars-' + name).textContent = data.text.length + ' chars';
+    statusEl.textContent = 'Reset to default';
+    statusEl.className = 'status status-ok';
+    const p = ALL_PROMPTS.find(x => x.name === name);
+    if (p) { p.current = data.text; p.isModified = false; }
+    document.getElementById('badge-' + name).textContent = 'Default';
+    document.getElementById('badge-' + name).className = 'badge badge-default';
+    document.getElementById('card-' + name).className = 'prompt-card';
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+  } catch(err) {
+    statusEl.textContent = 'Error: ' + err.message;
+    statusEl.className = 'status status-err';
+    resetBtn.disabled = false;
+  }
+}
+
+renderPrompts();
 </script>
 </body>
 </html>`;
