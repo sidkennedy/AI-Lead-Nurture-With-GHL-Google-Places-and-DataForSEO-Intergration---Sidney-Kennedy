@@ -3,6 +3,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const Anthropic = require('@anthropic-ai/sdk');
 const spend = require('./spend');
+const optouts = require('./optouts');
 const config = require('./config');
 const prompts = require('./prompts');
 const conversations = require('./conversations');
@@ -1040,6 +1041,12 @@ async function processHookOrNurture(job) {
 }
 
 async function processJob(job) {
+  if (optouts.isOptedOut(job.contactId)) {
+    console.log(`[Followups] Contact ${job.contactId} is opted out — cancelling job ${job.id}`);
+    updateJob(job.id, { status: 'cancelled', error: 'Contact opted out' });
+    return;
+  }
+
   if (job.type === 'silence-check') {
     await processSilenceCheck(job);
   } else if (job.type === 'email-hook' || job.type === 'email-nurture') {
