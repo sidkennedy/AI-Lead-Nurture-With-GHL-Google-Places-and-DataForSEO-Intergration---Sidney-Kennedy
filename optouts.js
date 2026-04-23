@@ -1,12 +1,8 @@
-const fs = require('fs');
-const path = require('path');
 const { Pool } = require('pg');
 
 const _pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 const OPT_OUT_KEYWORDS = /\b(stop|unsubscribe|quit|cancel|end|optout|opt[ -]out)\b/i;
-
-const SEED_FILE = path.join(__dirname, 'data', 'optouts.json');
 
 const _ready = (async () => {
   await _pool.query(`
@@ -15,23 +11,6 @@ const _ready = (async () => {
       opted_out_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-
-  // One-time seed: import any IDs from the legacy flat file
-  try {
-    const raw = fs.readFileSync(SEED_FILE, 'utf8');
-    const ids = JSON.parse(raw);
-    if (Array.isArray(ids) && ids.length > 0) {
-      for (const id of ids) {
-        await _pool.query(
-          'INSERT INTO optouts (contact_id) VALUES ($1) ON CONFLICT (contact_id) DO NOTHING',
-          [String(id)]
-        );
-      }
-      console.log(`[Optouts] Seeded ${ids.length} opt-out(s) from legacy file`);
-    }
-  } catch {
-    // No seed file or invalid JSON — nothing to import
-  }
 })().catch(err => console.error('[Optouts] Bootstrap error:', err.message));
 
 async function isOptedOut(contactId) {
