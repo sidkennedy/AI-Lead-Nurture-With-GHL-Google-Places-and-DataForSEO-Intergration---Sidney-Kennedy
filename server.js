@@ -1989,7 +1989,7 @@ async function rebuildQueue() {
     const res = await fetch('/api/admin/rebuild-queue', { method: 'POST', headers: { 'x-admin-key': ADMIN_KEY } });
     const data = await res.json();
     status.textContent = 'Done — scheduled ' + data.scheduled + ' job(s), skipped ' + data.skipped;
-    if (data.scheduled > 0) loadFollowUps();
+    if (data.scheduled > 0) loadFollowups();
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
   } finally {
