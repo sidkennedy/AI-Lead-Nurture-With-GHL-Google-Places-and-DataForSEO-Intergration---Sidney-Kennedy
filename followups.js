@@ -19,6 +19,13 @@ let _jobCache = [];
 async function _initJobsFromDb() {
   try {
     const { rows } = await _pool.query('SELECT * FROM followup_jobs ORDER BY send_at ASC');
+    if (rows.length === 0) {
+      // DB is empty — attempt a one-time migration from the JSON backup file.
+      // This recovers jobs for existing contacts after the first deployment that
+      // introduced DB persistence (previously jobs only lived in the flat file).
+      _loadJobsFromJson();
+      return;
+    }
     _jobCache = rows.map(r => ({
       id:        r.id,
       contactId: r.contact_id,
@@ -272,6 +279,7 @@ function scheduleJob({ contactId, type, position, sendAt, context }) {
   };
   jobs.push(job);
   save(jobs);
+  _dbUpsertJob(job);
   console.log(`[Followups] Scheduled ${type} pos=${position} for ${contactId} at ${new Date(sendAt).toISOString()} (tz: ${context?.timezone || DEFAULT_TZ})`);
   return job;
 }
@@ -279,6 +287,7 @@ function scheduleJob({ contactId, type, position, sendAt, context }) {
 function cancelContactJobs(contactId) {
   const jobs = load();
   let count = 0;
+  const cancelledIds = [];
   const updated = jobs.map(j => {
     if (
       j.contactId === contactId &&
@@ -286,12 +295,14 @@ function cancelContactJobs(contactId) {
       !j.type.startsWith('email-')
     ) {
       count++;
+      cancelledIds.push(j.id);
       return { ...j, status: 'cancelled' };
     }
     return j;
   });
   if (count > 0) {
     save(updated);
+    _dbBulkUpdateStatus(cancelledIds, 'cancelled');
     console.log(`[Followups] Cancelled ${count} pending SMS jobs for ${contactId} (email jobs preserved)`);
   }
   return count;
@@ -300,6 +311,7 @@ function cancelContactJobs(contactId) {
 function cancelEmailJobs(contactId) {
   const jobs = load();
   let count = 0;
+  const cancelledIds = [];
   const updated = jobs.map(j => {
     if (
       j.contactId === contactId &&
@@ -307,12 +319,14 @@ function cancelEmailJobs(contactId) {
       j.type.startsWith('email-')
     ) {
       count++;
+      cancelledIds.push(j.id);
       return { ...j, status: 'cancelled' };
     }
     return j;
   });
   if (count > 0) {
     save(updated);
+    _dbBulkUpdateStatus(cancelledIds, 'cancelled');
     console.log(`[Followups] Cancelled ${count} pending email jobs for ${contactId} (Disable AI tag)`);
   }
   return count;
@@ -329,6 +343,7 @@ function updateJob(jobId, updates) {
   if (idx === -1) return;
   jobs[idx] = { ...jobs[idx], ...updates };
   save(jobs);
+  _dbUpsertJob(jobs[idx]);
 }
 
 function getContactJobs(contactId) {
