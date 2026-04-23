@@ -109,7 +109,8 @@ function scheduleStep3AutoSend(contactId, resolvedConvId, skipReplyGuard = false
         direction: 'outbound',
         body: STEP3_TEXT,
         step: 3,
-        conversationId: resolvedConvId || null
+        conversationId: resolvedConvId || null,
+        variant: conversations.get(contactId)?.variant || null
       });
       brain.recordOutbound(contactId, STEP3_TEXT, 3, { variant: conversations.get(contactId)?.variant || null });
       conversations.update(contactId, { currentStep: 3 });
@@ -221,7 +222,8 @@ async function sendScanVisibilityMessage(contactId, resolvedConvId, sr) {
       direction: 'outbound',
       body: msg,
       step: 3,
-      conversationId: resolvedConvId || null
+      conversationId: resolvedConvId || null,
+      variant: conversations.get(contactId)?.variant || null
     });
     brain.recordOutbound(contactId, msg, 3, { variant: conversations.get(contactId)?.variant || null });
     console.log(`[ScanWatch] Visibility follow-up sent to ${contactId}`);
@@ -817,7 +819,8 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
       direction: 'outbound',
       body: reply,
       step: detectedStep,
-      conversationId: resolvedConvId || null
+      conversationId: resolvedConvId || null,
+      variant: contactVariant
     });
     brain.recordOutbound(contactId, reply, detectedStep, { variant: contactVariant });
     followups.scheduleSilenceCheck(contactId, detectedStep, reply);
@@ -832,7 +835,8 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
         direction: 'outbound',
         body: confirmationMsg,
         step: 3,
-        conversationId: resolvedConvId || null
+        conversationId: resolvedConvId || null,
+        variant: contactVariant
       });
       brain.recordOutbound(contactId, confirmationMsg, 3, { variant: contactVariant });
       followups.scheduleSilenceCheck(contactId, 3, confirmationMsg);
@@ -890,7 +894,7 @@ async function handleConfirmationReply(contactId, messageBody, contact, resolved
     conversations.update(contactId, { confirmationPending: null, awaitingRetryName: true });
     const clarification = "No problem — what's the exact name as it appears on Google Maps, and what street is it on?";
     await ghl.sendMessage(contactId, clarification);
-    conversations.addExchange(contactId, { direction: 'outbound', body: clarification, step: 3, conversationId: resolvedConvId || null });
+    conversations.addExchange(contactId, { direction: 'outbound', body: clarification, step: 3, conversationId: resolvedConvId || null, variant: contact.variant || null });
     brain.recordOutbound(contactId, clarification, 3, { variant: contact.variant || null });
     followups.scheduleSilenceCheck(contactId, 3, clarification);
     console.log(`[Webhook] Confirmation denied for ${contactId} — asking for correction`);
@@ -902,7 +906,7 @@ async function handleConfirmationReply(contactId, messageBody, contact, resolved
   if (!isYes) {
     const reprompt = "Just want to make sure — is that your practice listing? Reply yes or no.";
     await ghl.sendMessage(contactId, reprompt);
-    conversations.addExchange(contactId, { direction: 'outbound', body: reprompt, step: 3, conversationId: resolvedConvId || null });
+    conversations.addExchange(contactId, { direction: 'outbound', body: reprompt, step: 3, conversationId: resolvedConvId || null, variant: contact.variant || null });
     brain.recordOutbound(contactId, reprompt, 3, { variant: contact.variant || null });
     followups.scheduleSilenceCheck(contactId, 3, reprompt);
     return;
@@ -938,7 +942,7 @@ async function handleRetryName(contactId, messageBody, contact, resolvedConvId) 
         });
         const confirmMsg = `Found ${confirmName} at ${confirmAddress} — is that the right one?`;
         await ghl.sendMessage(contactId, confirmMsg);
-        conversations.addExchange(contactId, { direction: 'outbound', body: confirmMsg, step: 3, conversationId: resolvedConvId || null });
+        conversations.addExchange(contactId, { direction: 'outbound', body: confirmMsg, step: 3, conversationId: resolvedConvId || null, variant: contact.variant || null });
         brain.recordOutbound(contactId, confirmMsg, 3, { variant: contact.variant || null });
         followups.scheduleSilenceCheck(contactId, 3, confirmMsg);
         console.log(`[Webhook] Retry confirmation sent to ${contactId}: ${confirmName}`);
@@ -1448,6 +1452,12 @@ async function bootstrapStateFromGHL() {
 
 app.listen(PORT, () => {
   console.log(`Powered Up AI — GMB Message Generator running on port ${PORT}`);
+
+  // ── DB migrations (safe, idempotent) ──────────────────────────────────────
+  _promptsPool.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS variant varchar(1)`)
+    .then(() => console.log('[DB] contacts.variant column ensured'))
+    .catch(err => console.error('[DB] contacts.variant migration error:', err.message));
+
   prompts.seed();
   // Sync prompts from DB into local file on every startup — this ensures
   // UI-saved prompts survive redeployments (DB is the durable source of truth)
@@ -1938,6 +1948,48 @@ async function loadBrain() {
         }).join('')}</tbody>
       </table>\` : '';
 
+    // Load variant stats in parallel
+    let variantRows = '';
+    try {
+      const vRes = await fetch('/api/brain/variants', { headers: { 'x-admin-key': ADMIN_KEY } });
+      if (vRes.ok) {
+        const vData = await vRes.json();
+        if (vData.variants && vData.variants.some(v => v.sent > 0)) {
+          function vRatePill(r) {
+            if (r === null) return '<span style="color:#555">—</span>';
+            const col = r >= 30 ? '#22c55e' : r >= 15 ? '#f59e0b' : '#6b7280';
+            return \`<span style="font-weight:600;color:\${col}">\${r}%</span>\`;
+          }
+          const variantColors = { A: '#748ffc', B: '#f59e0b', C: '#34d399' };
+          variantRows = \`
+            <div style="margin-top:24px;border-top:1px solid #1e1e1e;padding-top:20px">
+              <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px">A/B/C Script Variant Performance</div>
+              <table class="perf-table">
+                <thead><tr>
+                  <th>Variant</th><th>Enabled</th><th>Contacts</th><th>Sent</th><th>Replied</th><th>Reply Rate</th><th>Booked</th><th>Book Rate</th>
+                </tr></thead>
+                <tbody>\${vData.variants.map(v => {
+                  const col = variantColors[v.variant] || '#aaa';
+                  return \`<tr>
+                    <td><span style="font-weight:700;color:\${col}">Variant \${v.variant}</span></td>
+                    <td><span style="\${v.enabled ? 'color:#22c55e' : 'color:#555'};font-weight:600">\${v.enabled ? 'Yes' : 'No'}</span></td>
+                    <td>\${v.contactsAssigned}</td>
+                    <td>\${v.sent}</td>
+                    <td>\${v.replied}</td>
+                    <td>\${vRatePill(v.replyRate)}</td>
+                    <td>\${v.booked}</td>
+                    <td>\${vRatePill(v.bookingRate)}</td>
+                  </tr>\`;
+                }).join('')}</tbody>
+              </table>
+              <div style="font-size:11px;color:#3a3a3a;margin-top:10px">Only settled scripted-SMS messages (reply window closed). Edit scripts at <a href="/admin/prompts?key=\${ADMIN_KEY}" style="color:#818cf8">Prompt Editor</a>.</div>
+            </div>\`;
+        } else {
+          variantRows = \`<div style="margin-top:24px;border-top:1px solid #1e1e1e;padding-top:20px"><div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">A/B/C Script Variant Performance</div><div style="font-size:13px;color:#444">No variant messages settled yet. Stats appear once reply windows close.</div></div>\`;
+        }
+      }
+    } catch (_) { /* variant stats are supplemental — ignore errors */ }
+
     el.innerHTML = \`
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px">
         <div class="stat-card"><div class="val">\${t.contacts || 0}</div><div class="lbl">Enrolled</div><div class="sub">contacts in AI sequence</div></div>
@@ -1948,6 +2000,7 @@ async function loadBrain() {
         <div class="stat-card"><div class="val" style="color:#4ade80">\${bookedRate}%</div><div class="lbl">Booking Rate</div><div class="sub">booked ÷ enrolled</div></div>
       </div>
       \${stageHtml}
+      \${variantRows}
     \`;
   } catch (err) {
     el.innerHTML = '<div class="empty">Failed to load: ' + escHtml(err.message) + '</div>';
@@ -2209,11 +2262,12 @@ function renderVariantSection() {
             </label>
           </div>
         </div>
-        <textarea id="vta-\${vd.variant}" rows="16" spellcheck="false">\${escapeHtml(vd.text)}</textarea>
+        <textarea id="vta-\${vd.variant}" rows="16" spellcheck="false" \${vd.enabled?'':'readonly style="opacity:.45;cursor:not-allowed"'}>\${escapeHtml(vd.text)}</textarea>
         <div class="actions">
-          <button class="btn btn-save" onclick="saveVariant('\${vd.variant}')">Save Variant \${vd.variant}</button>
+          <button class="btn btn-save" id="vsave-\${vd.variant}" onclick="saveVariant('\${vd.variant}')" \${vd.enabled?'':'disabled'}>Save Variant \${vd.variant}</button>
           <span class="status" id="vstatus-\${vd.variant}"></span>
           <span class="char-count" id="vchars-\${vd.variant}">\${charCount} chars</span>
+          \${vd.enabled?'':'<span style="font-size:12px;color:#555;margin-left:8px">Enable variant to edit</span>'}
         </div>
       </div>
     \`;
@@ -2284,8 +2338,10 @@ async function saveVariant(v) {
 
 async function toggleVariant(v, enabled) {
   const statusEl = document.getElementById('vstatus-' + v);
-  const labelEl = document.getElementById('vtl-' + v);
-  const chk = document.getElementById('vtog-' + v);
+  const labelEl  = document.getElementById('vtl-' + v);
+  const chk      = document.getElementById('vtog-' + v);
+  const ta       = document.getElementById('vta-' + v);
+  const saveBtn  = document.getElementById('vsave-' + v);
   try {
     const res = await fetch('/admin/variants/' + v + '/enabled', {
       method: 'POST',
@@ -2296,8 +2352,16 @@ async function toggleVariant(v, enabled) {
     if (!res.ok) throw new Error(data.error || res.statusText);
     const vd = VARIANTS.find(x => x.variant === v);
     if (vd) vd.enabled = enabled;
+    // Update label
     labelEl.textContent = enabled ? 'Enabled' : 'Disabled';
     labelEl.className = 'toggle-label ' + (enabled ? 'on' : 'off');
+    // Lock / unlock editor
+    if (ta) {
+      ta.readOnly = !enabled;
+      ta.style.opacity = enabled ? '' : '0.45';
+      ta.style.cursor  = enabled ? '' : 'not-allowed';
+    }
+    if (saveBtn) saveBtn.disabled = !enabled;
     if (statusEl) { statusEl.textContent = enabled ? '\u2713 Enabled' : 'Disabled'; statusEl.className = 'status ' + (enabled ? 'status-ok' : ''); }
   } catch(err) {
     if (chk) chk.checked = !enabled; // revert

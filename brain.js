@@ -368,6 +368,41 @@ function runAnalysis() {
     distinctContacts: new Set(outbound.map(m => m.contactId)).size
   };
 
+  // ── Variant performance summary ────────────────────────────────────────────
+  // Group settled scripted-sms messages by variant and store alongside patterns.
+  // `messages` at this point already has pending > 48h resolved to repliedWithin48h:false.
+  const variantMsgs = messages.filter(m =>
+    m.direction === 'outbound' &&
+    (m.message_type === 'scripted-sms' || (m.step !== null && m.step !== undefined)) &&
+    m.variant !== null && m.variant !== undefined &&
+    m.repliedWithin48h !== null
+  );
+
+  const vByVariant = {};
+  const vContactsByVariant = {};
+  for (const m of variantMsgs) {
+    const v = m.variant;
+    if (!vByVariant[v]) { vByVariant[v] = { sent: 0, replied: 0, booked: 0 }; vContactsByVariant[v] = new Set(); }
+    vByVariant[v].sent++;
+    vContactsByVariant[v].add(m.contactId);
+    if (m.repliedWithin48h) vByVariant[v].replied++;
+    if (m.booked)           vByVariant[v].booked++;
+  }
+  winning.variantStats = ['A', 'B', 'C'].map(v => {
+    const s = vByVariant[v] || { sent: 0, replied: 0, booked: 0 };
+    const contacts = vContactsByVariant[v]?.size || 0;
+    return {
+      variant: v,
+      contactsAssigned: contacts,
+      sent: s.sent,
+      replied: s.replied,
+      replyRate: s.sent > 0 ? Math.round((s.replied / s.sent) * 100) : null,
+      booked: s.booked,
+      bookingRate: s.sent > 0 ? Math.round((s.booked / s.sent) * 100) : null,
+      analyzedAt: Date.now()
+    };
+  });
+
   savePatterns(winning);
 
   const stageCount = ['sms_scripted', 'sms_followups', 'email'].reduce((acc, ch) => {

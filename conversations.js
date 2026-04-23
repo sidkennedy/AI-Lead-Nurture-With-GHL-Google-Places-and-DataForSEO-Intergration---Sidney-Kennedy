@@ -121,7 +121,10 @@ function _dbInsertExchange(contactId, exchange) {
       exchange.step || null,
       exchange.timestamp || Date.now(),
       exchange.direction || null,
-      JSON.stringify({ conversationId: exchange.conversationId || null })
+      JSON.stringify({
+        conversationId: exchange.conversationId || null,
+        variant: exchange.variant || null
+      })
     ]
   ).catch(err => console.error('[Conversations] DB exchange insert error:', err.message));
 }
