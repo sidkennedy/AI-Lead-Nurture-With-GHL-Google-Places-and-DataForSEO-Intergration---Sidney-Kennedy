@@ -230,8 +230,10 @@ function isInEmailWindow(ts, tz) {
 }
 
 /**
- * Find the next email send window, scanning forward in 30-minute increments.
- * Windows: 8:30–9:00am and 12:00–1:00pm local time.
+ * Find the next email send window and return a randomly scattered time within it.
+ * Windows: 8:30–9:00am (30-min window) and 12:00–1:00pm (60-min window) local time.
+ * Scatter: picks a random minute within whichever window it lands on so emails
+ * drip out rather than blasting at the same moment.
  */
 function nextEmailWindowMs(fromMs, tz) {
   const timezone = tz || DEFAULT_TZ;
@@ -239,7 +241,15 @@ function nextEmailWindowMs(fromMs, tz) {
   let t = Math.ceil((fromMs + 60_000) / STEP) * STEP;
   const limit = fromMs + 8 * 24 * 60 * 60 * 1000;
   while (t < limit) {
-    if (isInEmailWindow(t, timezone)) return t;
+    const { h, m } = tzHourMinute(t, timezone);
+    if (h === 8 && m === 30) {
+      // Morning anchor (8:30am) — scatter across 30-min window (8:30–8:59)
+      return t + Math.floor(Math.random() * 30) * 60 * 1000;
+    }
+    if (h === 12 && m === 0) {
+      // Noon anchor (12:00pm) — scatter across 60-min window (12:00–12:59)
+      return t + Math.floor(Math.random() * 60) * 60 * 1000;
+    }
     t += STEP;
   }
   return fromMs + 24 * 60 * 60 * 1000;
