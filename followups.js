@@ -206,8 +206,8 @@ function nextWindowMs(fromMs, tz) {
 // ─── Email Window Helpers ─────────────────────────────────────────────────────
 
 // Email send windows (local time):
-//   Morning:  8:30am – 9:00am
-//   Noon:    12:00pm – 1:00pm
+//   Morning:  8:30am – 9:30am  (60 min)
+//   Noon:    12:00pm – 2:00pm  (120 min)
 
 function tzHourMinute(ts, tz) {
   const d = new Date(ts || Date.now());
@@ -224,14 +224,14 @@ function tzHourMinute(ts, tz) {
 
 function isInEmailWindow(ts, tz) {
   const { h, m } = tzHourMinute(ts || Date.now(), tz || DEFAULT_TZ);
-  const inMorning = (h === 8 && m >= 30);
-  const inNoon    = (h === 12);
+  const inMorning = (h === 8 && m >= 30) || (h === 9 && m < 30); // 8:30–9:29am
+  const inNoon    = (h === 12 || h === 13);                        // 12:00–1:59pm
   return inMorning || inNoon;
 }
 
 /**
  * Find the next email send window and return a randomly scattered time within it.
- * Windows: 8:30–9:00am (30-min window) and 12:00–1:00pm (60-min window) local time.
+ * Windows: 8:30–9:30am (60-min window) and 12:00–2:00pm (120-min window) local time.
  * Scatter: picks a random minute within whichever window it lands on so emails
  * drip out rather than blasting at the same moment.
  */
@@ -243,12 +243,12 @@ function nextEmailWindowMs(fromMs, tz) {
   while (t < limit) {
     const { h, m } = tzHourMinute(t, timezone);
     if (h === 8 && m === 30) {
-      // Morning anchor (8:30am) — scatter across 30-min window (8:30–8:59)
-      return t + Math.floor(Math.random() * 30) * 60 * 1000;
+      // Morning anchor (8:30am) — scatter across 60-min window (8:30–9:29am)
+      return t + Math.floor(Math.random() * 60) * 60 * 1000;
     }
     if (h === 12 && m === 0) {
-      // Noon anchor (12:00pm) — scatter across 60-min window (12:00–12:59)
-      return t + Math.floor(Math.random() * 60) * 60 * 1000;
+      // Noon anchor (12:00pm) — scatter across 120-min window (12:00–1:59pm)
+      return t + Math.floor(Math.random() * 120) * 60 * 1000;
     }
     t += STEP;
   }
@@ -738,16 +738,19 @@ function shouldStopEmail(contactId) {
 
 /**
  * Defer email because the lead is actively texting us?
- * Returns true if the most recent inbound SMS exchange was within the last 4 hours.
+ * Returns true if the most recent inbound SMS exchange was within the last 14 hours.
+ * Email #1 (position 1) is exempt — it always fires at the next window since it
+ * is triggered specifically because the contact did NOT reply to initial outreach.
  */
-function shouldDeferEmail(contactId) {
+function shouldDeferEmail(contactId, position) {
+  if (position === 1) return false; // initial email is never deferred
   const contact = conversations.get(contactId);
   if (!contact) return false;
   const exchanges = contact.exchanges || [];
   const lastInbound = [...exchanges].reverse().find(e => e.direction === 'inbound');
   if (!lastInbound) return false;
-  const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
-  return (lastInbound.timestamp || 0) > fourHoursAgo;
+  const fourteenHoursAgo = Date.now() - 14 * 60 * 60 * 1000;
+  return (lastInbound.timestamp || 0) > fourteenHoursAgo;
 }
 
 // ─── Email Message Generation ─────────────────────────────────────────────────
@@ -907,9 +910,9 @@ async function processEmailJob(job) {
     return;
   }
 
-  // 2. Defer if lead is actively texting (last inbound within 4 hours)
-  if (shouldDeferEmail(job.contactId)) {
-    const deferTo = nextEmailWindowMs(Date.now() + 4 * 60 * 60 * 1000, tz);
+  // 2. Defer if lead is actively texting (last inbound within 14 hours); pos 1 exempt
+  if (shouldDeferEmail(job.contactId, job.position)) {
+    const deferTo = nextEmailWindowMs(Date.now() + 14 * 60 * 60 * 1000, tz);
     updateJob(job.id, { sendAt: deferTo });
     console.log(`[Followups] Email ${job.type} pos=${job.position} for ${job.contactId}: active conversation — deferring to ${new Date(deferTo).toISOString()}`);
     return;
