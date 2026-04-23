@@ -31,10 +31,10 @@ async function _initJobsFromDb() {
       contactId: r.contact_id,
       type:      r.type,
       position:  r.position,
-      sendAt:    r.send_at,
+      sendAt:    r.send_at    ? Number(r.send_at)    : null,
       status:    r.status,
-      sentAt:    r.sent_at,
-      createdAt: r.created_at,
+      sentAt:    r.sent_at    ? Number(r.sent_at)    : null,
+      createdAt: r.created_at ? Number(r.created_at) : null,
       context:   r.context || {},
       error:     r.context?.error || null
     }));
