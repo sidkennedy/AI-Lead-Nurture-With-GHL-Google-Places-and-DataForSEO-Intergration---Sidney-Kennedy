@@ -187,6 +187,7 @@ function addExchange(contactId, exchange) {
     body:           exchange.body,
     step:           exchange.step || null,
     conversationId: exchange.conversationId || null,
+    variant:        exchange.variant || null,
     timestamp:      ts
   };
   _cache[contactId].exchanges.push(ex);

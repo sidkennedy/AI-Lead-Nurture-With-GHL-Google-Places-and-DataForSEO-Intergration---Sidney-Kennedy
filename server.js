@@ -2410,7 +2410,8 @@ async function loadVariantStats() {
 function renderPrompts() {
   const container = document.getElementById('prompts');
   container.innerHTML = '';
-  ALL_PROMPTS.forEach(p => {
+  // 'conversationPrompt' is now managed by the A/B/C variant tabs above — skip it here.
+  ALL_PROMPTS.filter(p => p.name !== 'conversationPrompt').forEach(p => {
     if (p.sectionLabel) {
       const heading = document.createElement('div');
       heading.style.cssText = 'max-width:820px;margin:40px auto 20px;padding-bottom:10px;border-bottom:1px solid #2a2a2a;';

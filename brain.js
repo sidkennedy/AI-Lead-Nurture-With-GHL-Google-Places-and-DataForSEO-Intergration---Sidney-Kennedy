@@ -599,6 +599,17 @@ async function runLlmAnalysis(patterns) {
     if (flat) summaryParts.push(flat);
   }
 
+  // Include variant performance data so LLM analysis is variant-aware
+  const variantStats = patterns.variantStats;
+  if (variantStats && variantStats.some(v => v.sent > 0)) {
+    const variantLines = variantStats
+      .filter(v => v.sent > 0)
+      .map(v =>
+        `  Variant ${v.variant}: ${v.sent} msgs sent | Reply: ${v.replyRate !== null ? v.replyRate + '%' : '—'} | Booked: ${v.booked} | Book Rate: ${v.bookingRate !== null ? v.bookingRate + '%' : '—'} | Contacts: ${v.contactsAssigned}`
+      ).join('\n');
+    summaryParts.push(`=== A/B/C Discovery Script Variant Performance ===\n${variantLines}`);
+  }
+
   const patternSummary = summaryParts.join('\n\n');
 
   if (!patternSummary) {
