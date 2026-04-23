@@ -190,7 +190,8 @@ async function sendEmail(contactId, subject, body) {
       type:      'Email',
       contactId,
       subject,
-      html: body
+      html:      body,
+      emailFrom: 'contact@ampifyai.com'
     };
     const res = await fetch(`${BASE}/conversations/messages`, {
       method: 'POST',
