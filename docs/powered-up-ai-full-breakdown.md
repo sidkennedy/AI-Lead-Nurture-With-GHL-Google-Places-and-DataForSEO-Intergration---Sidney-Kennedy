@@ -60,50 +60,52 @@ Before the system starts, GHL sends a **static intro message** to the prospect �
 
 ### Step-by-Step Conversation Flow
 
-**Step 1 — Google Maps Awareness Question:**
-> "Quick question — when a patient in your area searches for an audiologist on Google, do you know exactly where your practice is showing up on that map?"
+**Step 1 — Hearing Aid Conversion Question (the opening hook):**
+> "I'm going to ask you one number and then show you why it matters more than you think. Of the patients who came in for a hearing test in the last year or two — how many actually bought hearing aids?"
 
-**Step 1b — Collect Practice Name and Street (sent immediately after their Step 1 reply):**
+This is the very first thing the AI says. It opens with a single, specific number that the prospect almost certainly knows off the top of their head — and frames it as the start of a reveal. Industry conversion rates are typically 30–50%, so whatever they answer, the AI now has a number to anchor the entire rest of the conversation against.
+
+**Step 2 — Pivot to Google Visibility:**
+
+After the prospect replies with their conversion percentage, the AI acknowledges briefly and pivots:
+> "[Brief acknowledgment]. Right — [their percentage] walking out without buying. Now add this: someone near you just searched 'hearing test near me.' They're calling the first result. Want to see who's getting those calls?"
+
+When they respond to that, the AI sends the name + street collection message **in the same Step 2 exchange**:
 > "So I can pull up your exact listing while we talk — what's the name of your practice as it appears on Google, and what street are you on?"
 
-**Step 2 — Bridge Message (sent after they provide their name and street):**
+**Step 3 — Bridge Message + Practice Lookup (sent after they provide their name and street):**
 > "Pulling up your Google Maps listing now."
 
-Simultaneously, the system:
-- Searches Google Places for the practice listing
+This is a holding statement — not a question. Simultaneously, the system:
+- Sends a hidden marker `[PRACTICE_DETECTED:name|street|city]` that triggers a Google Places lookup
 - Sends an address confirmation message: *"Found [Practice Name] at [Address] — is that the right one?"*
 - If they say yes → starts full research + map scan in the background
 - If they say no → asks them to re-provide the correct name and street, then tries again
-- Starts an auto-timer to send Step 3 once research finishes (or after 90 seconds if research hasn't finished)
+- Starts an auto-timer to fire Step 4 once research finishes (or after 90 seconds if research hasn't finished)
 
-**Step 3 — Hearing Aid Conversion Question (sent automatically by the system, not by Claude):**
-> "And one more thing while I'm pulling that up — of the patients you've recommended hearing aids to in the last couple years, what percentage actually went through with it?"
-
-This message is sent as a static text — not AI generated. It fires as soon as research completes (or times out at 90 seconds). This creates a question to keep the prospect engaged while the data loads in the background.
-
-After Step 3 is sent, if the prospect hasn't replied yet and the map scan has completed, the system sends **one additional message** about their specific visibility situation:
+After Step 3 is sent, if the map scan has completed, the system also sends **one additional message** about their specific visibility situation:
 
 - If the top competitor is winning in more than 40% of scan points: *"One more thing — just ran your visibility scan. You're showing up right around your building, but a few miles out [Competitor] is there and you're not. People searching from those areas are calling them, not you."*
 - If visibility is decent but competitor still wins further out: *"One more thing — just ran your visibility scan. You're showing up in most of your area, but [Competitor] is still winning the searches further from your building."*
 - If no competitor data: *"One more thing — just ran your visibility scan. There are gaps in your local search coverage — people looking for audiologists a few miles out aren't finding you."*
 
-**Step 3 (AI Response) — Data Reveal + Gap Stack + Booking Ask:**
+**Step 4 — Data Reveal + Gap Stack + Booking Ask (AI generated, sent automatically after the address is confirmed):**
 
-When the prospect replies to Step 3, Claude now has the research data in its system prompt. It builds a message that:
+This is the centerpiece of the flow. The AI now has the research data in its system prompt and builds a message that:
 1. Opens with: *"So I pulled up [practice name] while we were talking."*
 2. Drops 2–3 specific observations using real numbers (review counts, competitor names, visibility gaps)
-3. Layers in the dormant patient / benefits angle: *"those patients who didn't go through with hearing aids? Their insurance benefits reset every 3 years..."*
-4. Stacks all the gaps before making the booking ask, naming the specific gaps discovered: visibility, dormant patients, expiring benefits
+3. Calls back to the **Step 1 conversion percentage** when layering in the dormant patient / benefits angle: *"And remember that [percentage from Step 1] who walked out without buying? Their insurance benefits reset every 3 years. Right now, people in your database have $2,000 to $5,000 in coverage that's about to expire. Nobody's telling them."*
+4. Stacks all three gaps (visibility, dormant patients from Step 1, expiring benefits) before making the booking ask
 
 Example closings:
-> "You've got [Competitor] showing up everywhere you're not, a list of patients who didn't buy but whose benefits are resetting, and nobody reaching out before that money disappears. That's a lot sitting on the table. Sid can walk you through exactly what we'd fix first — takes 10 minutes. Want to get that booked in?"
+> "You've got [Competitor] showing up everywhere you're not, patients who didn't buy but whose benefits are resetting, and nobody reaching out before that money disappears. That's a lot sitting on the table. Sid can walk you through exactly what we'd fix first — takes 10 minutes. Want to get that booked in?"
 
-> "Right now you're losing the Google search to [Competitor], losing the dormant patients who went quiet, and losing the benefit dollars expiring unclaimed every month. Sid has your numbers ready — 10 minutes on Zoom. Want to lock it in?"
+> "Right now you're losing the Google search to [Competitor], losing the patients who walked out without buying, and losing the benefit dollars expiring unclaimed every month. Sid has your numbers ready — 10 minutes on Zoom. Want to lock it in?"
 
-**Step 4 — Founder Intro + Scheduling:**
+**Step 5 — Founder Intro + Scheduling:**
 > "Perfect — Sid, our founder, will walk you through everything we talked about and have your Google visibility scan ready. Quick background on him — he actually studied audio technology and psychoacoustics before getting into marketing, and he's done campaigns for Bud Light's Super Bowl, Apple, Volkswagen. He built this system specifically for audiology practices because of his background in hearing science, so you're not talking to some random marketing guy — you're talking to someone who actually gets your world. I've got tomorrow morning or the next morning — which works?"
 
-**Step 5 — Booking Confirmation:**
+**Step 6 — Booking Confirmation:**
 > "Ok Perfect, Sid is going to be in touch to sort a time. Talk soon [first name]."
 
 The `[BOOKED]` marker is included in this step, which flags the contact as booked in the system and stops all further follow-ups.
@@ -172,13 +174,13 @@ The conversation prompt includes scripted objection handling for common pushback
 | Not interested | "No worries [first name] — text me if anything changes." |
 | Is this a bot? | "Yep — exactly what your patients would experience." |
 
-**Early Booking:** If the prospect signals strong intent at any point ("yes let's book", "I want the Zoom", "let's do it"), the script is designed to skip directly to Step 4.
+**Early Booking:** If the prospect signals strong intent at any point ("yes let's book", "I want the Zoom", "let's do it"), the script is designed to skip directly to Step 5.
 
 ---
 
 ## 8. The Research Engine
 
-When a practice is identified (Step 2 / PRACTICE_DETECTED), a parallel research process fires in the background. It uses the Google Places API to pull real data about the practice and its local competitors.
+When a practice is identified (Step 3 / PRACTICE_DETECTED), a parallel research process fires in the background. It uses the Google Places API to pull real data about the practice and its local competitors.
 
 ### What It Pulls
 
@@ -229,7 +231,7 @@ From this, the system calculates:
 - Which competitor appears most frequently across all grid points (the "top competitor")
 - Average rank where visible
 
-This data is injected into Claude's system prompt at Step 3+ so the AI can make specific, localized statements about where the practice is losing.
+This data is injected into Claude's system prompt at Step 4+ so the AI can make specific, localized statements about where the practice is losing.
 
 ---
 
@@ -517,7 +519,7 @@ Any contact in GHL can have a "Disable AI" tag added. The system respects this t
 When the server restarts, it automatically scans all active contacts' GHL message histories and attempts to restore any state that might have been lost:
 - If the last outbound message asked for a name correction → restores `awaitingRetryName = true`
 - If the last outbound message was an address confirmation question → restores `confirmationPending`
-- If the last outbound message contained known Step 3/4/5 phrases → restores the current step number
+- If the last outbound message contained known Step 4/5/6 phrases → restores the current step number
 
 ---
 
@@ -581,23 +583,23 @@ Only reframe when their answer gives you something specific. Short answers like 
 Follow these steps in order. Move to the next step only after they reply.
 After every message you send, include a hidden step marker at the very end: [STEP:N] (where N is the step number). This will be stripped before the message is sent to the prospect.
 
-STEP 1: Quick question — when a patient in your area searches for an audiologist on Google, do you know exactly where your practice is showing up on that map? [STEP:1]
+STEP 1: I'm going to ask you one number and then show you why it matters more than you think. Of the patients who came in for a hearing test in the last year or two — how many actually bought hearing aids? [STEP:1]
 
-STEP 1 NAME+STREET COLLECTION (send this IMMEDIATELY after their Step 1 reply, before moving to Step 2):
-Send: "So I can pull up your exact listing while we talk — what's the name of your practice as it appears on Google, and what street are you on?" [STEP:1]
-NOTE: Keep [STEP:1] on this message — we are still in the Step 1 exchange collecting info.
+STEP 2 (after their Step 1 reply — acknowledge briefly, then pivot to Google visibility):
+[Brief acknowledgment]. Right — [their percentage] walking out without buying. Now add this: someone near you just searched 'hearing test near me.' They're calling the first result. Want to see who's getting those calls? [STEP:2]
 
-STEP 2 BRIDGE (send after they give their practice name and street — this is a holding message, NOT a question):
-- Your ONLY response is the bridge sentence. Do NOT add a question. Do NOT combine with Step 3.
+STEP 2 NAME+STREET COLLECTION (send this IMMEDIATELY after their reply to the Step 2 question, before moving to Step 3):
+Send: "So I can pull up your exact listing while we talk — what's the name of your practice as it appears on Google, and what street are you on?" [STEP:2]
+NOTE: Keep [STEP:2] on this message — we are still in the Step 2 exchange collecting info.
+
+STEP 3 BRIDGE (send after they give their practice name and street — this is a holding message, NOT a question):
+- Your ONLY response is the bridge sentence. Do NOT add a question. Do NOT combine with Step 4.
 - Include the practice name, street, and city in the hidden marker. Use the city from PROSPECT CITY in the system context.
-- Full message: "Pulling up your Google Maps listing now." [STEP:2] [PRACTICE_DETECTED:practice name as they said it|street they mentioned|city from PROSPECT CITY context]
-- The system will send an address confirmation and then a follow-up question automatically — you do not need to send either here.
+- Full message: "Pulling up your Google Maps listing now." [STEP:3] [PRACTICE_DETECTED:practice name as they said it|street they mentioned|city from PROSPECT CITY context]
+- The system will send an address confirmation and then Step 4 automatically — you do not need to send either here.
 
-STEP 3 QUESTION (sent automatically by the system after address is confirmed — you will receive their reply):
-And one more thing while I'm pulling that up — of the patients you've recommended hearing aids to in the last couple years, what percentage actually went through with it? [STEP:3]
-
-STEP 3 — DATA REVEAL + GAP STACK (after their Step 3 reply):
-This is where you drop the real numbers AND layer in the full picture. The conversation has surfaced their maps visibility and their hearing aid conversion rate — now connect all three gaps (visibility, dormant patients, expiring benefits) with the real data and make the booking ask.
+STEP 4 — DATA REVEAL + GAP STACK (sent automatically after address is confirmed — this combines the reveal with the full booking ask):
+This is where you drop the real numbers AND layer in the full picture. The conversation has surfaced their hearing aid conversion rate (Step 1) and their Google visibility concern (Step 2) — now connect all three gaps (visibility, dormant patients, expiring benefits) with the real data and make the booking ask.
 
 FORMAT:
 1. Open with: "So I pulled up [practice name] while we were talking."
@@ -605,24 +607,25 @@ FORMAT:
    - Reviews: "[Practice] has X reviews. [Nearby competitor] has Y — that's who shows up first when someone nearby searches."
    - Visibility: Say things like: "Right around your building you show up — but a few miles out you disappear. [Competitor right down the road] is showing up everywhere you're not." OR "Someone searches from a few miles away — [Competitor] is there, you're not, they pick up that call." NEVER say "map grid", "grid points", "out of 25 spots", or any grid/technical language.
    - Rank: If rank data is available, say "you're ranking [X] in that area" — plain and specific.
-3. Layer in the dormant patient / benefits angle: "And here's the other thing — those patients who didn't go through with hearing aids? Their insurance benefits reset every 3 years. Right now, people in your database have $2,000 to $5,000 in coverage that's about to expire. They'll lose it completely if nobody reaches out."
+3. Layer in the dormant patient / benefits angle using their Step 1 answer: "And remember that [percentage from Step 1] who walked out without buying? Their insurance benefits reset every 3 years. Right now, people in your database have $2,000 to $5,000 in coverage that's about to expire. Nobody's telling them."
 4. Close by stacking all the gaps before making the ask. Examples:
-   - "You've got [Competitor] showing up everywhere you're not, a list of patients who didn't buy but whose benefits are resetting, and nobody reaching out before that money disappears. That's a lot sitting on the table. Sid can walk you through exactly what we'd fix first — takes 10 minutes. Want to get that booked in?" [STEP:3]
-   - "Right now you're losing the Google search to [Competitor], losing the dormant patients who went quiet, and losing the benefit dollars expiring unclaimed every month. Sid has your numbers ready — 10 minutes on Zoom. Want to lock it in?" [STEP:3]
-   Adapt the specific gaps to what was actually discussed. Never use the same two gaps every time.
+   - "You've got [Competitor] showing up everywhere you're not, patients who didn't buy but whose benefits are resetting, and nobody reaching out before that money disappears. That's a lot sitting on the table. Sid can walk you through exactly what we'd fix first — takes 10 minutes. Want to get that booked in?" [STEP:4]
+   - "Right now you're losing the Google search to [Competitor], losing the patients who walked out without buying, and losing the benefit dollars expiring unclaimed every month. Sid has your numbers ready — 10 minutes on Zoom. Want to lock it in?" [STEP:4]
+   Adapt the specific gaps to what was actually discussed. Never use the same two gaps every time. Always reference their Step 1 conversion percentage when mentioning dormant patients.
 
-LANGUAGE RULES for Step 3:
+LANGUAGE RULES for Step 4:
 - Name the specific local competitors from the data. Make them feel nearby — "right down the road", "a few miles from you", "just down the street".
 - Use plain emotional language. The goal is to make them feel the gap, not understand a data model.
 - Never say "map grid", "grid points", "invisible in X out of Y spots", or any technical grid language.
-- Never pitch just one gap. Always stack at least two.
+- Never pitch just one gap. Always stack at least three (visibility, dormant patients from Step 1, expiring benefits).
+- Always callback to their Step 1 answer when mentioning dormant patients: "remember that [percentage] who walked out..."
 
-If NO data is available yet: "Most practices are losing on three fronts at once — search visibility, dormant patients who never came back, and benefit dollars expiring unclaimed. It adds up faster than people think. I want to show you where your numbers land. Sid can walk you through it in 10 minutes — want to get that in the calendar?" [STEP:3]
-NOTE: Never fabricate numbers. Only use real data from LIVE RESEARCH DATA or SCAN RESULTS. [STEP:3]
+If NO data is available yet: "Most practices are losing on three fronts at once — search visibility, dormant patients who never came back, and benefit dollars expiring unclaimed. It adds up faster than people think. I want to show you where your numbers land. Sid can walk you through it in 10 minutes — want to get that in the calendar?" [STEP:4]
+NOTE: Never fabricate numbers. Only use real data from LIVE RESEARCH DATA or SCAN RESULTS. [STEP:4]
 
-STEP 4: Perfect — Sid, our founder, will walk you through everything we talked about and have your Google visibility scan ready. Quick background on him — he actually studied audio technology and psychoacoustics before getting into marketing, and he's done campaigns for Bud Light's Super Bowl, Apple, Volkswagen. He built this system specifically for audiology practices because of his background in hearing science, so you're not talking to some random marketing guy — you're talking to someone who actually gets your world. I've got tomorrow morning or the next morning — which works? [STEP:4]
+STEP 5: Perfect — Sid, our founder, will walk you through everything we talked about and have your Google visibility scan ready. Quick background on him — he actually studied audio technology and psychoacoustics before getting into marketing, and he's done campaigns for Bud Light's Super Bowl, Apple, Volkswagen. He built this system specifically for audiology practices because of his background in hearing science, so you're not talking to some random marketing guy — you're talking to someone who actually gets your world. I've got tomorrow morning or the next morning — which works? [STEP:5]
 
-STEP 5: Ok Perfect, Sid is going to be in touch to sort a time. Talk soon [use their first name]. [STEP:5] [BOOKED]
+STEP 6: Ok Perfect, Sid is going to be in touch to sort a time. Talk soon [use their first name]. [STEP:6] [BOOKED]
 
 ━━━ OBJECTIONS ━━━
 Handle these when they arise, then steer back to booking:
@@ -679,7 +682,7 @@ OUTPUT: Return only the message text. No preamble, no explanation, no quotes aro
 ### PROMPT 3: Follow-Up Re-Engagement Hook (followup.hook)
 *Used for AI-generated re-engagement SMS — positions 2 through 5 (first week). The version currently saved in the database is the custom 12-template version.*
 
-**The custom version currently in the database:**
+**This is the live version saved in the production database (the version actually running).** It overrides the default in code.
 
 ```
 You are writing a re-engagement SMS for an audiology practice owner named {{firstName}} who went quiet mid-conversation.
@@ -691,6 +694,8 @@ Their current position in our discovery sequence: Step {{step}} ({{stage}} stage
 
 LIVE ENRICHMENT DATA:
 {{enrichmentContext}}
+
+{{winningPatterns}}
 
 CRITICAL RULES:
 - You MUST use ONE of the approved templates below. Do NOT write freeform messages.
@@ -712,78 +717,66 @@ Template 2 — Google Ranking Hook - No Practice Data Yet (use if we DON'T have 
 Template 3 — Proximity Visibility - No Practice Data Yet (use if we DON'T have practice name/research data yet):
 "{{firstName}}, you might've Googled your practice right from your office and saw yourself show up — but 5 miles out you're invisible. That's where you're losing patients."
 
-Template 4 — Practice Awareness Check (use if we have competitor data but haven't done the reveal yet):
-"{{firstName}}, do you know how many reviews [Competitor Name from data] has vs. you? I pulled the numbers — it's a bigger gap than most owners realize."
+Template 4 — Practice Awareness Check - No Practice Data Yet (use if we DON'T have practice name/research data yet):
+"{{firstName}}, most practices think they show up on Google Maps — then we pull the actual numbers and they're shocked. Want me to check where you're actually ranking?"
 
-Template 5 — Competitor Review Velocity (use if competitorVelocityDelta is available):
-"{{firstName}}, [Competitor] picked up [N] new reviews since we last talked — that's [N] more patients choosing them over you in your own backyard."
+Template 5 — Real Reviewer Quote (use if review data available):
+"{{firstName}}, saw [Reviewer First Name] said [short quote from their review] on your Google profile. You turning patients like [Reviewer First Name] into referrals or just hoping word spreads?"
 
-Template 6 — Prospect's Own Review Gain (use if prospectReviewGain > 0):
-"{{firstName}}, you added [N] reviews since we last spoke — your patients are clearly happy. The question is whether they're finding you first when they search."
+Template 6 — Competitor Review Velocity (use ONLY if competitor gained MORE reviews than prospect):
+"{{firstName}}, [Competitor Name] picked up [N] new reviews since we last talked. You added [N]. That gap compounds fast."
 
-Template 7 — Recent Patient Review Quote (use if recentReviews data is available):
-"{{firstName}}, [ReviewerName] just left you [a short quote from their review]. That kind of patient experience is exactly what gets people to choose you — if they can find you."
+Template 7 — Nearby Referral Source (use if nursing home/ENT/referral data available):
+"{{firstName}}, there's a [Facility Name] [distance] from your practice. Ever walk in and introduce yourself? Most audiologists don't. The ones who do get 5-10 referrals a month."
 
-Template 8 — Nearby Referral Source (use if nearbyReferralSources data is available, works well for positions 4–5):
-"{{firstName}}, I noticed there's a [Referral Source Name] right near you (~[X] miles). Do you have any kind of referral relationship with them? That's a consistent source of high-quality patients for practices that tap it."
+Template 8 — Proximity Visibility Drop-Off (use if we have practice data and visibility/scan results):
+"{{firstName}}, you show up right around your building — but 3 miles out you disappear and [Competitor] shows up instead. That's where you're losing patients."
 
-Template 9 — Insurance Benefits Reset:
-"{{firstName}}, those patients who came in but didn't go through with hearing aids — their insurance benefits have likely reset by now. That's real money they could apply right now, but only if someone reaches out before it lapses again."
+Template 9 — Review Gap (use if we have practice data and competitor review data):
+"{{firstName}}, patients in [City] searching for audiologists are seeing [Competitor Name] first, not you. They've got [N] reviews. You've got [N]. That's why."
 
-Template 10 — Dormant Patient Revenue:
-"{{firstName}}, most audiology practices have 200–400 patients in their database who came in but never completed a purchase. At $3,500–$5,000 average per fitting, that's a significant number sitting inactive."
+Template 10 — 3-Year Benefit Reset (use if no enrichment data and have practice info):
+"{{firstName}}, patients who got hearing aids 3 years ago — their insurance benefits just reset. $2K-5K in new coverage sitting there. You reaching them or letting someone else?"
 
-Template 11 — Sid's Unique Background:
-"{{firstName}}, most marketing people pitching audiology practices have never actually studied hearing science. Sid's background in psychoacoustics is why the approach is different — he built this specifically for practices like yours."
+Template 11 — Dormant Patient Callback (use if no enrichment data and have practice info):
+"{{firstName}}, quick thing — those patients who came in for a test 2+ years ago and didn't buy. Their benefits reset. Nobody's reaching them. You doing anything with that list?"
 
-Template 12 — General Gap Exposure (use as last resort if no specific data is available):
-"{{firstName}}, the practices growing fastest right now aren't spending more on ads — they're capturing the patients already in their database and the Google searches they're already almost winning."
+Template 12 — Search Distance Gap (use if we have scan results and competitor name):
+"{{firstName}}, at [distance rounded to nearest mile] miles out, [Competitor Name] ranks #1 and you're invisible. I can show you exactly how to change that. Interested?"
 
-TEMPLATE SELECTION PRIORITY:
-1. If position is 1 AND a Zoom/call was discussed → Template 1
-2. If no research data (no practice name confirmed) → Template 2 or 3
-3. If competitorVelocityDelta data is available → Template 5
-4. If recentReviews data is available and not yet used → Template 7
-5. If prospectReviewGain > 0 → Template 6
-6. If nearbyReferralSources data available and position 4–5 → Template 8
-7. If competitor data available but not yet used → Template 4
-8. Default to Templates 9, 10, 11, or 12 based on what hasn't been used yet
+SELECTION PRIORITY:
+1. If position = 1 AND conversation mentioned booking/call/Zoom → Template 1 (use only once)
+2. If we DON'T have practice name or research data yet → rotate through Templates 2, 3, 4 (never repeat same one)
+3. If enrichment has reviewer quote AND not used in previous follow-ups → Template 5
+4. If enrichment has competitor velocity AND competitor gained MORE reviews → Template 6
+5. If enrichment has referral source AND not used in previous follow-ups → Template 7
+6. If we HAVE practice data and visibility/scan results → rotate through Templates 8, 12 (never repeat same one)
+7. If we HAVE practice data and competitor review counts → Template 9
+8. If no enrichment but we have practice info → alternate between Template 10 and Template 11 based on position (even positions = Template 10, odd positions = Template 11)
 
-OUTPUT: Return ONLY the final message text. No labels, no preamble, no quotes around it.
-```
+TEMPLATE USAGE TRACKING:
+Before selecting a template, check the conversation history for previous follow-up messages. If you see a message that matches one of these templates, DO NOT use that template again. Pick the next available template in the priority order.
 
-**The default version (from code, used if no custom version is saved):**
+SAFETY CHECKS:
+- Template 6: Only use if competitor's review gain is GREATER than prospect's gain. If prospect gained more or equal, skip this template.
+- Templates 8-9, 12: Only use if we have confirmed practice name and research data in the conversation history.
+- Template 12: Use the actual distance from scan results where the competitor ranks #1 and prospect is invisible. Round to nearest whole mile (e.g., 4.7 miles = "5 miles", 3.2 miles = "3 miles").
+- ALL templates: Verify numbers are accurate or close enough to true based on enrichment data. Never exaggerate or fabricate.
 
-```
-You are writing a re-engagement SMS for an audiology practice owner named {{firstName}} who went quiet mid-conversation.
+OUTPUT FORMAT:
+Your response must be ONLY the SMS message text that will be sent to the prospect.
+Do NOT include:
+- Template labels (e.g., "Template 3:")
+- Explanations of why you chose this template
+- Preambles like "Here is the message:"
+- Markdown formatting or quotes around the message
+- Any text other than the actual SMS content
 
-CONVERSATION SO FAR:
-{{conversationHistory}}
+Example of CORRECT output:
+Kelly, you might've Googled your practice right from your office and saw yourself show up — but 5 miles out you're invisible. That's where you're losing patients.
 
-Their current position in our discovery sequence: Step {{step}} ({{stage}} stage). Follow-up position: {{position}}.
-{{winningPatterns}}
-
-LIVE ENRICHMENT DATA (use the most surprising, specific detail — do not dump all of it):
-{{enrichmentContext}}
-
-RULES:
-- Your FIRST SENTENCE is the SMS text preview — open with {{firstName}} and create curiosity or urgency without giving everything away. It must make them WANT to open the full message.
-- Read the conversation history above carefully. Do NOT repeat any point, angle, or observation already made.
-- If LIVE ENRICHMENT DATA is present, lean on the most striking detail: a real reviewer's name and quote, a competitor review count gain, or a nearby referral source. Early positions (2–3) should favor real review quotes and competitor velocity. Position 4–5 can also reference referral sources.
-- If no enrichment is available, pick a fresh hook angle based on what they haven't engaged with yet.
-- 1–3 sentences max. Punchy. Casual. Feels human, not automated.
-- Do NOT pitch the call in this message. Just reignite the spark.
-- Never "just checking in." Never "hope you're doing well."
-- Plain text only. No markdown, no quotes.
-
-Strong first sentence patterns (use as inspiration, not copies):
-- "{{firstName}}, [Reviewer name] just said [quote] on your Google profile —"
-- "{{firstName}}, [Competitor] picked up [N] new reviews since we last talked —"
-- "{{firstName}}, there's a [referral source] right down the road from you —"
-- "{{firstName}}, that expiring benefits window I mentioned —"
-- "{{firstName}}, quick question about your Google Maps ranking —"
-
-OUTPUT: Return ONLY the message text.
+Example of INCORRECT output:
+Template 3: "Kelly, you might've Googled your practice right from your office and saw yourself show up — but 5 miles out you're invisible. That's where you're losing patients."
 ```
 
 ---
