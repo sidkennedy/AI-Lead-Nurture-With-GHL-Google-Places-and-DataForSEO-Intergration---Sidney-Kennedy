@@ -1346,8 +1346,17 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
   try {
     const stats = brain.getVariantStats();
     const enabledList = prompts.getEnabledVariants();
+
+    // Count true assigned contacts from contacts.variant (source of truth)
+    const allContacts = conversations.getAll();
+    const assignedCounts = { A: 0, B: 0, C: 0 };
+    for (const c of Object.values(allContacts)) {
+      if (c.variant && assignedCounts[c.variant] !== undefined) assignedCounts[c.variant]++;
+    }
+
     const result = stats.map(s => ({
       ...s,
+      contactsAssigned: assignedCounts[s.variant] || 0,
       enabled: enabledList.includes(s.variant)
     }));
     res.json({ ok: true, variants: result });
@@ -1461,9 +1470,24 @@ app.listen(PORT, () => {
   prompts.seed();
   // Sync prompts from DB into local file on every startup — this ensures
   // UI-saved prompts survive redeployments (DB is the durable source of truth)
-  prompts.syncFromDb(_promptsPool).catch(err =>
-    console.error('[Prompts] Startup DB sync error:', err.message)
-  );
+  prompts.syncFromDb(_promptsPool).then(async () => {
+    // Seed any variant prompt keys that aren't in the DB yet (ensures DB is
+    // always the full source of truth from day one, no lazy-init surprises).
+    const variantKeys = [
+      'conversationPrompt.A', 'conversationPrompt.B', 'conversationPrompt.C',
+      'conversationPrompt.A.enabled', 'conversationPrompt.B.enabled', 'conversationPrompt.C.enabled'
+    ];
+    for (const key of variantKeys) {
+      const val = prompts.get(key);
+      if (val) {
+        await _promptsPool.query(
+          'INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING',
+          [key, val, Date.now()]
+        ).catch(err => console.error(`[Prompts] Variant seed error for ${key}:`, err.message));
+      }
+    }
+    console.log('[Prompts] Variant prompt keys seeded to DB');
+  }).catch(err => console.error('[Prompts] Startup DB sync error:', err.message));
   brain.startScheduledAnalysis();
   followups.startScheduler();
   bootstrapStateFromGHL().catch(err => console.error('[Bootstrap] Error:', err.message));

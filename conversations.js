@@ -12,6 +12,8 @@ let _ready = false;
 
 async function initFromDb() {
   try {
+    // Ensure the variant column exists before reading — idempotent, safe to run on every start.
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS variant varchar(1)').catch(() => {});
     const { rows: contacts } = await pool.query('SELECT * FROM contacts');
     for (const c of contacts) {
       _cache[c.contact_id] = {
