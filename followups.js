@@ -542,7 +542,9 @@ async function generateHookMessage(contact, position, jobType, contactId) {
     enrichmentContext
   });
 
-  const systemPrompt = prompts.get('followup.system');
+  const now = new Date();
+  const dateContext = `Today is ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. Current time: ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.`;
+  const systemPrompt = `${dateContext}\n\n${prompts.get('followup.system')}`;
 
   if (spend.isAtLimit(contactId)) {
     console.warn(`[Followups] Skipping SMS generation for ${contactId} — spend limit reached`);
@@ -787,7 +789,9 @@ async function generateEmailMessage(contact, position, jobType, contactId) {
     winningPatterns
   });
 
-  const systemPrompt = prompts.get('email.system');
+  const _emailNow = new Date();
+  const _emailDateCtx = `Today is ${_emailNow.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. Current time: ${_emailNow.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.`;
+  const systemPrompt = `${_emailDateCtx}\n\n${prompts.get('email.system')}`;
 
   if (spend.isAtLimit(contactId)) {
     console.warn(`[Followups] Skipping email generation for ${contactId} — spend limit reached`);
