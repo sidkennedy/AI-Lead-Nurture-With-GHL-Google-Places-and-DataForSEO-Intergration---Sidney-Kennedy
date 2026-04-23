@@ -1099,9 +1099,36 @@ async function processJob(job) {
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
 
+let _paused = false;
+
+function pauseScheduler()  { _paused = true;  console.log('[Followups] Scheduler PAUSED — no jobs will fire'); }
+function resumeScheduler() { _paused = false; console.log('[Followups] Scheduler RESUMED'); }
+function isPaused()        { return _paused; }
+
+/**
+ * Cancel every pending SMS job (hook + nurture) immediately.
+ * Returns the number of jobs cancelled.
+ */
+function cancelAllPendingSmsJobs() {
+  const jobs = load();
+  const cancelledIds = [];
+  const updated = jobs.map(j => {
+    if (j.status === 'pending' && !j.type.startsWith('email-') && j.type !== 'silence-check') {
+      cancelledIds.push(j.id);
+      return { ...j, status: 'cancelled', error: 'Emergency cancel by admin' };
+    }
+    return j;
+  });
+  save(updated);
+  _dbBulkUpdateStatus(cancelledIds, 'cancelled');
+  console.log(`[Followups] Emergency cancel: ${cancelledIds.length} SMS job(s) cancelled`);
+  return cancelledIds.length;
+}
+
 let draining = false;
 
 async function drainJobs() {
+  if (_paused) return;
   if (draining) return;
   draining = true;
   try {
@@ -1150,6 +1177,7 @@ module.exports = {
   scheduleSilenceCheck,
   cancelContactJobs,
   cancelEmailJobs,
+  cancelAllPendingSmsJobs,
   getDueJobs,
   getContactJobs,
   getAllJobs,
@@ -1159,5 +1187,8 @@ module.exports = {
   nextWindowMs,
   nextEmailWindowMs,
   scheduleEmailNext,
-  scheduleJob
+  scheduleJob,
+  pauseScheduler,
+  resumeScheduler,
+  isPaused
 };

@@ -1350,6 +1350,27 @@ app.post('/api/admin/rebuild-queue', requireAdmin, async (req, res) => {
   });
 });
 
+// ─── Admin: Emergency Controls ────────────────────────────────────────────────
+
+app.post('/api/admin/pause', requireAdmin, (req, res) => {
+  followups.pauseScheduler();
+  res.json({ ok: true, paused: true });
+});
+
+app.post('/api/admin/resume', requireAdmin, (req, res) => {
+  followups.resumeScheduler();
+  res.json({ ok: true, paused: false });
+});
+
+app.get('/api/admin/paused', requireAdmin, (req, res) => {
+  res.json({ paused: followups.isPaused() });
+});
+
+app.post('/api/admin/cancel-sms-jobs', requireAdmin, (req, res) => {
+  const cancelled = followups.cancelAllPendingSmsJobs();
+  res.json({ ok: true, cancelled });
+});
+
 // ─── Admin: Opt-Out Blocklist ──────────────────────────────────────────────────
 
 app.get('/api/optouts', requireAdmin, async (req, res) => {
@@ -1857,9 +1878,13 @@ tr:hover td{background:#18181c}
 
   <div class="queue-summary" id="queue-summary"></div>
   <div id="followups-content"><div class="loading">Loading&hellip;</div></div>
-  <div style="margin-top:12px;border-top:1px solid #2a2a2a;padding-top:12px">
+  <div style="margin-top:12px;border-top:1px solid #2a2a2a;padding-top:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <div id="pause-controls">
+      <button id="pause-btn" onclick="togglePause()" style="background:#3a1a1a;color:#f87171;border:1px solid #5a2d2d;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">⏸ Pause Scheduler</button>
+    </div>
+    <button onclick="cancelAllSms()" style="background:#3a0a0a;color:#fca5a5;border:1px solid #7f1d1d;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px">🛑 Cancel All Pending SMS</button>
     <button onclick="rebuildQueue()" style="background:#1a3a1a;color:#4ade80;border:1px solid #2d5a2d;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px">Rebuild Queue (recover lost jobs)</button>
-    <span id="rebuild-status" style="margin-left:10px;font-size:12px;color:#888"></span>
+    <span id="rebuild-status" style="font-size:12px;color:#888"></span>
   </div>
 </div>
 
@@ -2057,6 +2082,41 @@ async function rebuildQueue() {
     status.textContent = 'Error: ' + err.message;
   } finally {
     btn.disabled = false;
+  }
+}
+
+let _schedulerPaused = false;
+async function togglePause() {
+  const btn = document.getElementById('pause-btn');
+  const status = document.getElementById('rebuild-status');
+  btn.disabled = true;
+  try {
+    const endpoint = _schedulerPaused ? '/api/admin/resume' : '/api/admin/pause';
+    const res = await fetch(endpoint, { method: 'POST', headers: { 'x-admin-key': ADMIN_KEY } });
+    const data = await res.json();
+    _schedulerPaused = data.paused;
+    btn.textContent = _schedulerPaused ? '▶ Resume Scheduler' : '⏸ Pause Scheduler';
+    btn.style.background = _schedulerPaused ? '#1a3a1a' : '#3a1a1a';
+    btn.style.color = _schedulerPaused ? '#4ade80' : '#f87171';
+    btn.style.borderColor = _schedulerPaused ? '#2d5a2d' : '#5a2d2d';
+    status.textContent = _schedulerPaused ? 'Scheduler paused — no texts will fire' : 'Scheduler resumed';
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function cancelAllSms() {
+  const status = document.getElementById('rebuild-status');
+  if (!confirm('Cancel ALL pending SMS jobs? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/admin/cancel-sms-jobs', { method: 'POST', headers: { 'x-admin-key': ADMIN_KEY } });
+    const data = await res.json();
+    status.textContent = data.cancelled + ' SMS job(s) cancelled';
+    loadFollowups();
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
   }
 }
 
