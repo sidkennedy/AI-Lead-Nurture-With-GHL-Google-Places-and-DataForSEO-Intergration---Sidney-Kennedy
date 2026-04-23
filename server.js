@@ -1283,6 +1283,58 @@ app.get('/api/followups/:contactId', requireAdmin, (req, res) => {
   res.json(jobs.sort((a, b) => b.createdAt - a.createdAt));
 });
 
+// ─── Admin: Rebuild Follow-Up Queue ──────────────────────────────────────────
+// One-shot recovery endpoint for contacts whose follow-up jobs were lost
+// (e.g. after a deployment that wiped the in-memory/flat-file queue).
+// Only schedules jobs for contacts that genuinely need them; safe to call
+// multiple times — the dedup guard in /enrolled already prevents duplicates.
+
+app.post('/api/admin/rebuild-queue', requireAdmin, async (req, res) => {
+  const allContacts = conversations.getAll();
+  const pendingJobs  = followups.getAllJobs('pending');
+  const pendingSet   = new Set(pendingJobs.map(j => j.contactId));
+
+  const results = { scheduled: [], skipped: [] };
+
+  for (const contact of Object.values(allContacts)) {
+    const { contactId, firstName, booked, currentStep, exchanges = [] } = contact;
+
+    // Skip: booked, opted-out, or already has pending jobs
+    if (booked) { results.skipped.push({ contactId, firstName, reason: 'booked' }); continue; }
+    if (pendingSet.has(contactId)) { results.skipped.push({ contactId, firstName, reason: 'has_pending_job' }); continue; }
+    if (await optouts.isOptedOut(contactId)) { results.skipped.push({ contactId, firstName, reason: 'opted_out' }); continue; }
+
+    const outbound = exchanges.filter(e => e.direction === 'outbound');
+    const inbound  = exchanges.filter(e => e.direction === 'inbound');
+
+    // Skip: never received any outbound message (nothing to follow up on)
+    if (outbound.length === 0) { results.skipped.push({ contactId, firstName, reason: 'no_outbound' }); continue; }
+
+    // Skip: contact is actively in conversation (has inbound replies)
+    if (inbound.length > 0) { results.skipped.push({ contactId, firstName, reason: 'has_replies' }); continue; }
+
+    // Contact got at least one outbound, never replied, not booked/opted-out,
+    // and has no pending job → schedule hook position 1 for the next send window.
+    const tz      = followups.estimateTimezone(contact.city || '');
+    const sendAt  = followups.nextWindowMs(Date.now(), tz);
+    followups.scheduleJob({
+      contactId,
+      type: 'hook',
+      position: 1,
+      sendAt,
+      context: { timezone: tz, firstName, city: contact.city || '', phone: contact.phone || '' }
+    });
+    results.scheduled.push({ contactId, firstName, sendAt: new Date(sendAt).toISOString() });
+  }
+
+  console.log(`[RebuildQueue] Scheduled ${results.scheduled.length}, skipped ${results.skipped.length}`);
+  res.json({
+    scheduled: results.scheduled.length,
+    skipped: results.skipped.length,
+    detail: results
+  });
+});
+
 // ─── Admin: Opt-Out Blocklist ──────────────────────────────────────────────────
 
 app.get('/api/optouts', requireAdmin, async (req, res) => {
@@ -1742,6 +1794,10 @@ tr:hover td{background:#18181c}
 
   <div class="queue-summary" id="queue-summary"></div>
   <div id="followups-content"><div class="loading">Loading&hellip;</div></div>
+  <div style="margin-top:12px;border-top:1px solid #2a2a2a;padding-top:12px">
+    <button onclick="rebuildQueue()" style="background:#1a3a1a;color:#4ade80;border:1px solid #2d5a2d;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px">Rebuild Queue (recover lost jobs)</button>
+    <span id="rebuild-status" style="margin-left:10px;font-size:12px;color:#888"></span>
+  </div>
 </div>
 
 <!-- ── Spend Monitor ── -->
@@ -1921,6 +1977,23 @@ function renderQueue() {
         </tr>\`;
       }).join('')}</tbody>
     </table>\`;
+  }
+}
+
+async function rebuildQueue() {
+  const btn = event.target;
+  const status = document.getElementById('rebuild-status');
+  btn.disabled = true;
+  status.textContent = 'Running…';
+  try {
+    const res = await fetch('/api/admin/rebuild-queue', { method: 'POST', headers: { 'x-admin-key': ADMIN_KEY } });
+    const data = await res.json();
+    status.textContent = 'Done — scheduled ' + data.scheduled + ' job(s), skipped ' + data.skipped;
+    if (data.scheduled > 0) loadFollowUps();
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 
