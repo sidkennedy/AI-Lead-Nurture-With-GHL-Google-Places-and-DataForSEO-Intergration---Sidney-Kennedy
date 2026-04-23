@@ -102,9 +102,11 @@ function getAI() {
 const DEFAULT_TZ       = 'America/New_York'; // EST fallback when city unknown
 const SILENCE_CHECK_MS = 5 * 60 * 1000;     // 5 minutes
 
-// SMS send window: 8:00pm – 8:30pm local time (Eastern when city unknown)
-const WINDOW_HOUR     = 20; // 8pm
-const WINDOW_MIN_END  = 30; // exclusive upper bound on minutes (0–29 = :00, 30 = :30 slot included below)
+// SMS send window: 7:00pm – 9:00pm local time (Eastern when city unknown).
+// Jobs are scattered randomly within this window at scheduling time so texts
+// drip out across 2 hours rather than blasting all at once.
+const WINDOW_START_HOUR = 19; // 7pm
+const WINDOW_END_HOUR   = 21; // 9pm (exclusive)
 
 // ─── Cadence Constants ────────────────────────────────────────────────────────
 
@@ -173,23 +175,29 @@ function tzTime(ts, tz) {
 function tzHour(ts, tz) { return tzTime(ts, tz).hour; }
 
 function isInWindow(ts, tz) {
-  const { hour, minute } = tzTime(ts || Date.now(), tz || DEFAULT_TZ);
-  // 8:00pm–8:30pm inclusive: slots at :00 and :30
-  return hour === WINDOW_HOUR && minute <= WINDOW_MIN_END;
+  const { hour } = tzTime(ts || Date.now(), tz || DEFAULT_TZ);
+  return hour >= WINDOW_START_HOUR && hour < WINDOW_END_HOUR;
 }
 
 /**
- * Find the next allowed send window, scanning forward in 30-minute increments.
- * Window: 8:00pm–8:30pm in the contact's local timezone (Eastern fallback).
+ * Find the next SMS send window and return a randomly scattered time within it.
+ * Window: 7:00pm–9:00pm in the contact's local timezone (Eastern fallback).
+ * Scatter: each call picks a random minute (0–119) within the 2-hour window
+ * so texts drip out rather than blasting all at once.
  */
 function nextWindowMs(fromMs, tz) {
   const timezone = tz || DEFAULT_TZ;
-  const STEP = 30 * 60 * 1000; // 30 minutes
-  // Snap to next 30-minute boundary (skip at least 1 min ahead)
+  const STEP = 30 * 60 * 1000; // 30-minute scan step
+  // Snap to next 30-minute boundary at least 1 min ahead
   let t = Math.ceil((fromMs + 60_000) / STEP) * STEP;
   const limit = fromMs + 8 * 24 * 60 * 60 * 1000;
   while (t < limit) {
-    if (isInWindow(t, timezone)) return t;
+    const { hour } = tzTime(t, timezone);
+    if (hour === WINDOW_START_HOUR) {
+      // Found the 7pm anchor — scatter randomly across the full 2-hour window
+      const scatterMs = Math.floor(Math.random() * 120) * 60 * 1000;
+      return t + scatterMs;
+    }
     t += STEP;
   }
   return fromMs + 24 * 60 * 60 * 1000;
