@@ -443,6 +443,9 @@ function getStats() {
   const outbound = messages.filter(m => m.direction === 'outbound');
   const inbound = messages.filter(m => m.direction === 'inbound');
 
+  const settled = outbound.filter(m => m.repliedWithin48h !== null);
+  const repliedMsgs = settled.filter(m => m.repliedWithin48h === true);
+
   const byStage = {};
   for (const msg of outbound) {
     const stage = msg.stage || 'unknown';
@@ -454,10 +457,12 @@ function getStats() {
 
   return {
     totals: {
-      outbound: outbound.length,
-      inbound: inbound.length,
-      contacts: new Set(messages.map(m => m.contactId)).size,
-      booked: new Set(outbound.filter(m => m.booked).map(m => m.contactId)).size
+      outbound:    outbound.length,
+      inbound:     inbound.length,
+      settled:     settled.length,
+      repliedMsgs: repliedMsgs.length,
+      contacts:    new Set(messages.map(m => m.contactId)).size,
+      booked:      new Set(outbound.filter(m => m.booked).map(m => m.contactId)).size
     },
     byStage,
     winningPatterns: patterns,

@@ -2192,7 +2192,7 @@ async function loadBrain() {
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
     const t = data.totals || {};
-    const replyRate = t.outbound > 0 ? Math.round((t.inbound / t.outbound) * 100) : 0;
+    const replyRate = t.settled > 0 ? Math.round((t.repliedMsgs / t.settled) * 100) : 0;
     const bookedRate = t.contacts > 0 ? Math.round((t.booked / t.contacts) * 100) : 0;
 
     // Update stat cards
