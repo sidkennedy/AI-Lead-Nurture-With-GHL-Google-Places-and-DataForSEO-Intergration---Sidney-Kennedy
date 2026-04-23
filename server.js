@@ -591,14 +591,12 @@ function recoverStateFromHistory(contactId, fresh, rawGhlMessages) {
 
   // Recover currentStep from known scripted text patterns
   if (!fresh?.currentStep || fresh.currentStep === 0) {
-    if (bodyLower.includes("you've got patients you haven't seen in 2+")) {
+    if (bodyLower.includes('i pulled up') && bodyLower.includes('while we were talking')) {
       updates.currentStep = 3;
-    } else if (bodyLower.includes('i pulled up') && bodyLower.includes('while we were talking')) {
-      updates.currentStep = 4;
     } else if (bodyLower.includes('sid, our founder')) {
-      updates.currentStep = 5;
+      updates.currentStep = 4;
     } else if (bodyLower.includes('locked in') && bodyLower.includes('calendar invite')) {
-      updates.currentStep = 6;
+      updates.currentStep = 5;
     }
     if (updates.currentStep) {
       console.log(`[StateRecovery] Restored currentStep ${updates.currentStep} for ${contactId}`);
