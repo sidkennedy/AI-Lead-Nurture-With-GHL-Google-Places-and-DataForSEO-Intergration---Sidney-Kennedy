@@ -519,7 +519,12 @@ app.post('/webhooks/ghl/appointment', async (req, res) => {
     return;
   }
 
-  // Mark as booked in local record (if not already) and record in brain for stats
+  // Only record the first appointment — follow-ups don't change the booked status
+  if (contact.booked) {
+    console.log(`[Appointment] Contact ${contactId} (${contact.firstName}) already booked — ignoring follow-up appointment`);
+    return;
+  }
+
   conversations.update(contactId, { booked: true });
   brain.recordBooking(contactId);
   console.log(`[Appointment] Contact ${contactId} (${contact.firstName}) has a confirmed GHL appointment — marked booked`);
