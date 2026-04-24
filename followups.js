@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const { Pool } = require('pg');
 const Anthropic = require('@anthropic-ai/sdk');
 const spend = require('./spend');
@@ -19,13 +17,6 @@ let _jobCache = [];
 async function _initJobsFromDb() {
   try {
     const { rows } = await _pool.query('SELECT * FROM followup_jobs ORDER BY send_at ASC');
-    if (rows.length === 0) {
-      // DB is empty — attempt a one-time migration from the JSON backup file.
-      // This recovers jobs for existing contacts after the first deployment that
-      // introduced DB persistence (previously jobs only lived in the flat file).
-      _loadJobsFromJson();
-      return;
-    }
     _jobCache = rows.map(r => ({
       id:        r.id,
       contactId: r.contact_id,
@@ -40,23 +31,8 @@ async function _initJobsFromDb() {
     }));
     console.log(`[Followups] DB loaded: ${_jobCache.length} jobs`);
   } catch (err) {
-    console.error('[Followups] DB init error:', err.message, '— falling back to JSON');
-    _loadJobsFromJson();
+    console.error('[Followups] DB init error:', err.message);
   }
-}
-
-function _loadJobsFromJson() {
-  try {
-    const FILE = path.join(__dirname, 'data', 'followups.json');
-    if (!fs.existsSync(FILE)) return;
-    const data = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-    if (Array.isArray(data) && data.length > 0) {
-      _jobCache = data;
-      // Migrate to DB silently
-      _jobCache.forEach(j => _dbUpsertJob(j));
-      console.log('[Followups] Imported', _jobCache.length, 'jobs from JSON backup');
-    }
-  } catch {}
 }
 
 function _dbUpsertJob(j) {

@@ -12,7 +12,7 @@
  *
  * Flags:
  *   --tag <name>      GHL tag to filter by (default: "amplify")
- *   --execute         Write to conversations.json + followups.json and schedule jobs
+ *   --execute         Write to the database and schedule jobs
  *   --delay <ms>      Pause between contacts in execute mode (default: 2000ms)
  */
 
