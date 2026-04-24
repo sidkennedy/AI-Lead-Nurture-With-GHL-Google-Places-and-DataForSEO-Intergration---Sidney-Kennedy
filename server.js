@@ -69,99 +69,90 @@ const _promptsPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl:
 const jobQueue = [];
 let processing = false;
 
-// ─── Step-3 Auto-Send Tracker ─────────────────────────────────────────────────
-// When PRACTICE_DETECTED fires, the "Pulling up your listing" bridge is sent and
-// the Step 3 message is queued. Instead of a fixed delay, we poll until research
-// completes (or 90 s timeout) so the AI always has research data when they reply.
-// After Step 3 is sent, a second watcher fires the scan-visibility follow-up
-// once the map scan completes — but only if the prospect hasn't replied yet.
+// ─── AI-Generation Auto-Trigger Tracker ───────────────────────────────────────
+// When [PRACTICE_DETECTED] fires, the "Pulling up your listing" bridge goes out
+// and research kicks off. After the prospect confirms the address (or any path
+// where no confirmation prompt was sent), we poll for research completion — or
+// hit a 90 s timeout — and then trigger Claude to generate the next scripted
+// step from the variant prompt. After that AI reply, a separate watcher fires
+// the scan-visibility follow-up once the map scan completes (only if the
+// prospect hasn't already replied).
 //
-// Conversation order (post-reorder):
-//   Step 1  → Google Maps awareness question
-//   Step 1b → Collect practice name + street
-//   Step 2  → Bridge "Pulling up your listing now" + [PRACTICE_DETECTED:…]
-//   Step 3  → (auto-sent below) Hearing aid conversion question — asked while
-//             research loads so there's no awkward silence. AI then has both
-//             the maps data AND the hearing aid context for the Step 4 reveal.
-//   Step 4  → AI-generated: full data reveal (maps + competitors) + dormant
-//             patients + expiring benefits + gap stack + booking ask
-//   Step 5  → Sid intro / scheduling
-//   Booked  → Confirmation
-const pendingStep3   = new Map(); // contactId → setInterval handle (research poller)
+// Conversation order (post-refactor):
+//   - Discovery   AI-generated steps (variant-specific opening + qualification)
+//   - Bridge      "Pulling up your Google Maps listing now." + [PRACTICE_DETECTED:…]
+//   - System      "Found X at Y — is that the right one?" (Google Places lookup)
+//   - Prospect    "yes" / "yep" (confirms the listing)
+//   - AI          next scripted step from the variant prompt
+//                  • Variant B → hearing-aid percentage question (Step 5)
+//                  • Variant A/C → data reveal / booking step
+//   - Watcher     visibility follow-up if the scan finishes before the prospect
+//                 replies to the AI step (early-aborts past the data reveal)
+const pendingAiTrigger = new Map(); // contactId → setInterval handle (research poller)
 const pendingScanWatch = new Map(); // contactId → setInterval handle (scan watcher)
 
-const STEP3_POLL_MS    = 2 * 1000;
-const STEP3_TIMEOUT_MS = 90 * 1000;
-const SCAN_POLL_MS     = 2 * 1000;
-const SCAN_TIMEOUT_MS  = 90 * 1000;
+const AI_TRIGGER_POLL_MS    = 2 * 1000;
+const AI_TRIGGER_TIMEOUT_MS = 90 * 1000;
+const SCAN_POLL_MS          = 2 * 1000;
+const SCAN_TIMEOUT_MS       = 90 * 1000;
 
-const STEP3_TEXT = 'And one more thing while I\'m pulling that up — of the patients you\'ve recommended hearing aids to in the last couple years, what percentage actually went through with it?';
-
-function scheduleStep3AutoSend(contactId, resolvedConvId, skipReplyGuard = false) {
-  clearPendingStep3(contactId);
+function scheduleAiResponseAfterResearch(contactId, resolvedConvId, opts = {}) {
+  const skipReplyGuard = opts.skipReplyGuard === true;
+  clearPendingAiTrigger(contactId);
   const started = Date.now();
 
   const handle = setInterval(async () => {
     const contact = conversations.get(contactId);
     if (!contact || contact.booked) {
-      clearPendingStep3(contactId);
+      clearPendingAiTrigger(contactId);
       return;
     }
 
     const session = sessions.get(contactId);
     const researchDone = session?.researchStatus === 'complete' || session?.researchStatus === 'failed';
-    const timedOut     = Date.now() - started > STEP3_TIMEOUT_MS;
+    const timedOut     = Date.now() - started > AI_TRIGGER_TIMEOUT_MS;
 
     if (!researchDone && !timedOut) return; // still waiting
 
-    clearPendingStep3(contactId);
+    clearPendingAiTrigger(contactId);
 
-    // Cancel if prospect already replied after the bridge — skip when the
-    // confirmation YES was their last message (skipReplyGuard)
+    // Cancel if prospect replied after our last outbound — skip when their
+    // confirmation YES was the last inbound (skipReplyGuard).
     if (!skipReplyGuard) {
       const exch    = contact.exchanges || [];
       const lastOut = [...exch].reverse().find(e => e.direction === 'outbound');
       const lastIn  = [...exch].reverse().find(e => e.direction === 'inbound');
       if (lastIn && lastOut && lastIn.timestamp > lastOut.timestamp) {
-        console.log(`[Step3Auto] ${contactId} already replied — skipping auto-send`);
+        console.log(`[AiTrigger] ${contactId} already replied — skipping auto-trigger`);
         return;
       }
     }
 
     if (timedOut && !researchDone) {
-      console.log(`[Step3Auto] Research timeout for ${contactId} — sending Step 3 without data`);
+      console.log(`[AiTrigger] Research timeout for ${contactId} — generating reply without data`);
     }
 
     try {
-      await ghl.sendMessage(contactId, STEP3_TEXT);
-      conversations.addExchange(contactId, {
-        direction: 'outbound',
-        body: STEP3_TEXT,
-        step: 4,
-        conversationId: resolvedConvId || null,
-        variant: conversations.get(contactId)?.variant || null
-      });
-      brain.recordOutbound(contactId, STEP3_TEXT, 4, { variant: conversations.get(contactId)?.variant || null });
-      conversations.update(contactId, { currentStep: 4 });
-      followups.scheduleSilenceCheck(contactId, 4, STEP3_TEXT);
-      console.log(`[Step3Auto] Step 3 sent to ${contactId} (research ${researchDone ? 'complete' : 'timed out'})`);
+      await generateAndSendAiReply(contactId, resolvedConvId);
+      console.log(`[AiTrigger] AI reply triggered for ${contactId} (research ${researchDone ? 'complete' : 'timed out'})`);
 
-      // Watch for scan completion → send visibility follow-up
+      // Watch for scan completion → send visibility follow-up. The watcher
+      // early-aborts once the contact has moved past the data-reveal step.
       watchForScanAndSendVisibility(contactId, resolvedConvId);
     } catch (err) {
-      console.error(`[Step3Auto] Failed to send Step 3 for ${contactId}:`, err.message);
+      console.error(`[AiTrigger] Failed to generate AI reply for ${contactId}:`, err.message);
     }
-  }, STEP3_POLL_MS);
+  }, AI_TRIGGER_POLL_MS);
 
-  pendingStep3.set(contactId, handle);
-  console.log(`[Step3Auto] Watching for research completion for ${contactId}`);
+  pendingAiTrigger.set(contactId, handle);
+  console.log(`[AiTrigger] Watching for research completion for ${contactId}`);
 }
 
-function clearPendingStep3(contactId) {
-  if (pendingStep3.has(contactId)) {
-    clearInterval(pendingStep3.get(contactId));
-    pendingStep3.delete(contactId);
-    console.log(`[Step3Auto] Cancelled pending Step 3 for ${contactId}`);
+function clearPendingAiTrigger(contactId) {
+  if (pendingAiTrigger.has(contactId)) {
+    clearInterval(pendingAiTrigger.get(contactId));
+    pendingAiTrigger.delete(contactId);
+    console.log(`[AiTrigger] Cancelled pending AI trigger for ${contactId}`);
   }
 }
 
@@ -181,8 +172,12 @@ function watchForScanAndSendVisibility(contactId, resolvedConvId) {
   const handle = setInterval(async () => {
     const contact = conversations.get(contactId);
 
-    // Stop if booked or prospect already replied to Step 3 (moved to Step 4+)
-    if (!contact || contact.booked || (contact.currentStep !== undefined && contact.currentStep > 4)) {
+    // Stop if booked or the conversation has advanced past the variant's
+    // post-confirmation question step (variant B's percentage Q lives at step 5;
+    // variant A/C jump straight to the data reveal at step 7). Past step 5 the
+    // visibility info has already been folded into the data reveal — no need
+    // to send a separate visibility nudge.
+    if (!contact || contact.booked || (contact.currentStep !== undefined && contact.currentStep > 5)) {
       clearInterval(handle);
       pendingScanWatch.delete(contactId);
       return;
@@ -204,12 +199,14 @@ function watchForScanAndSendVisibility(contactId, resolvedConvId) {
     const sr = session.scanResults;
     if (!sr) return;
 
-    // Also abort if prospect replied while we were polling
-    const exch    = contact.exchanges || [];
-    const lastOut = [...exch].reverse().find(e => e.direction === 'outbound' && e.step === 4);
-    const lastIn  = [...exch].reverse().find(e => e.direction === 'inbound');
-    if (lastIn && lastOut && lastIn.timestamp > lastOut.timestamp) {
-      console.log(`[ScanWatch] ${contactId} already replied to Step 3 — skipping visibility message`);
+    // Also abort if the prospect has replied since the watcher started — at that
+    // point Claude is about to respond with the variant's next step, which will
+    // surface the scan data inline (variant B step 6 / variant A step 7), so
+    // the standalone visibility nudge would be redundant.
+    const exch   = contact.exchanges || [];
+    const lastIn = [...exch].reverse().find(e => e.direction === 'inbound');
+    if (lastIn && lastIn.timestamp >= started) {
+      console.log(`[ScanWatch] ${contactId} replied while scan was running — skipping visibility nudge`);
       return;
     }
 
@@ -230,7 +227,7 @@ function clearScanWatch(contactId) {
 
 async function sendScanVisibilityMessage(contactId, resolvedConvId, sr) {
   const contact = conversations.get(contactId);
-  if (!contact || contact.booked || contact.currentStep > 4) return;
+  if (!contact || contact.booked || contact.currentStep > 5) return;
 
   const competitor   = sr?.topCompetitor?.name;
   const visibleTop3  = sr?.visibleTop3  ?? 0;
@@ -398,9 +395,9 @@ app.post('/webhooks/ghl/inbound', async (req, res) => {
   // AI handler or a due scheduler job cannot fire after this inbound arrives.
   followups.cancelContactJobs(contactId);
 
-  // Cancel any pending auto-send of Step 3 (they replied, so flow resumes normally)
-  clearPendingStep3(contactId);
-  // Cancel scan-visibility watcher if the prospect replied to Step 3
+  // Cancel any pending AI auto-trigger (they replied, so flow resumes normally)
+  clearPendingAiTrigger(contactId);
+  // Cancel scan-visibility watcher if the prospect replied to the data-reveal step
   clearScanWatch(contactId);
 
   enqueueJob({ contactId, conversationId, messageBody, firstName, city, phone });
@@ -910,7 +907,60 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     return await handleRetryName(contactId, messageBody, fresh, resolvedConvId);
   }
 
-  // ── 4.6. Build message history from GHL + local ───────────────────────────────
+  // ── 4.6. Hand off to the AI generation pipeline ───────────────────────────────
+  await generateAndSendAiReply(contactId, resolvedConvId, {
+    fresh,
+    rawGhlMessages,
+    resolvedFirstName,
+    resolvedCity
+  });
+}
+
+// ─── AI Generation Pipeline ───────────────────────────────────────────────────
+// Builds the message history + variant-specific system prompt, calls Claude,
+// processes hidden markers ([STEP:N], [PRACTICE_DETECTED:…], [BOOKED]), sends
+// the reply via GHL, and persists the exchange. Called from:
+//   • handleInbound — every inbound webhook that isn't intercepted by the
+//                     confirmation / retry-name short-circuits
+//   • scheduleAiResponseAfterResearch — to generate the next scripted step
+//                     once research/scan completes (post-bridge / post-YES)
+async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
+  let fresh = opts.fresh || conversations.get(contactId);
+  if (!fresh) {
+    console.log(`[AiGen] No contact record for ${contactId} — skipping`);
+    return;
+  }
+  if (fresh.booked) {
+    console.log(`[AiGen] Contact ${contactId} already booked — skipping AI generation`);
+    return;
+  }
+
+  // Honour API spend limit (also checked at the top of handleInbound; this
+  // covers post-research auto-triggers that bypass that path).
+  if (spend.isAtLimit(contactId)) {
+    console.warn(`[AiGen] Contact ${contactId} hit API spend limit — not generating reply`);
+    return;
+  }
+
+  const resolvedFirstName = opts.resolvedFirstName ?? fresh.firstName ?? '';
+  const resolvedCity = opts.resolvedCity ?? fresh.city ?? '';
+
+  // Fetch GHL message history if the caller didn't already supply it.
+  let rawGhlMessages = opts.rawGhlMessages;
+  if (!rawGhlMessages) {
+    if (resolvedConvId) {
+      try {
+        rawGhlMessages = await ghl.fetchMessages(resolvedConvId);
+      } catch (err) {
+        console.warn(`[AiGen] Could not fetch GHL messages for ${contactId}:`, err.message);
+        rawGhlMessages = [];
+      }
+    } else {
+      rawGhlMessages = [];
+    }
+  }
+
+  // Build message history from GHL + local
   let messages = [];
   if (rawGhlMessages.length > 0) {
     messages = buildMessagesFromGhl(rawGhlMessages);
@@ -918,14 +968,13 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   if (messages.length === 0) {
     messages = buildMessagesFromLocal(fresh?.exchanges || []);
   }
-
   if (messages.length === 0) {
-    console.log(`[Webhook] No message history for ${contactId}`);
+    console.log(`[AiGen] No message history for ${contactId}`);
     return;
   }
 
-  // ── 5. Build system prompt with live data + winning patterns ─────────────────
-  // Pick variant-specific prompt (A/B/C). Fall back to base if not set.
+  // Build system prompt with live data + winning patterns. Pick variant-specific
+  // prompt (A/B/C); fall back to the base prompt if no variant is assigned.
   const contactVariant = fresh?.variant || null;
   const variantPromptKey = contactVariant ? `conversationPrompt.${contactVariant}` : 'conversationPrompt';
   let systemContent = prompts.get(variantPromptKey) || prompts.get('conversationPrompt');
@@ -970,7 +1019,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     }, null, 2)}`;
   }
 
-  // ── 6. Call Claude ────────────────────────────────────────────────────────────
+  // Call Claude
   const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
   const response = await anthropic.messages.create({
     model,
@@ -983,7 +1032,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
 
   let reply = response.content[0]?.text?.trim() || '';
 
-  // ── 7. Extract hidden markers ─────────────────────────────────────────────────
+  // ── Extract hidden markers ──
 
   // [STEP:N] — track current step
   const stepMatch = reply.match(/\[STEP:(\d+)\]/i);
@@ -1001,7 +1050,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
 
     reply = reply.replace(/\[PRACTICE_DETECTED:[^\]]+\]\s*/i, '').trim();
     conversations.update(contactId, { practiceName, practiceStreet, practiceCity });
-    console.log(`[Webhook] Practice detected: "${practiceName}" on "${practiceStreet}" in "${practiceCity}"`);
+    console.log(`[AiGen] Practice detected: "${practiceName}" on "${practiceStreet}" in "${practiceCity}"`);
 
     const apiKey = process.env.GOOGLE_PLACES_KEY;
     if (apiKey && practiceName) {
@@ -1019,20 +1068,20 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
             confirmationPending: { placeId: topResult.place_id, name: confirmName, address: confirmAddress, city: practiceCity }
           });
           confirmationMsg = `Found ${confirmName} at ${confirmAddress} — is that the right one?`;
-          console.log(`[Webhook] Address confirmation queued for ${contactId}: ${confirmName}`);
+          console.log(`[AiGen] Address confirmation queued for ${contactId}: ${confirmName}`);
         } else {
-          console.log(`[Webhook] No listing found for "${searchQuery}" — skipping confirmation`);
+          console.log(`[AiGen] No listing found for "${searchQuery}" — skipping confirmation`);
           startResearchAndScan(contactId, practiceName, practiceStreet, practiceCity, null);
-          scheduleStep3AutoSend(contactId, resolvedConvId);
+          scheduleAiResponseAfterResearch(contactId, resolvedConvId);
         }
       } catch (err) {
-        console.error('[Webhook] Fast lookup error:', err.message);
+        console.error('[AiGen] Fast lookup error:', err.message);
         startResearchAndScan(contactId, practiceName, practiceStreet, practiceCity, null);
-        scheduleStep3AutoSend(contactId, resolvedConvId);
+        scheduleAiResponseAfterResearch(contactId, resolvedConvId);
       }
     } else {
       startResearchAndScan(contactId, practiceName, practiceStreet, practiceCity, null);
-      scheduleStep3AutoSend(contactId, resolvedConvId);
+      scheduleAiResponseAfterResearch(contactId, resolvedConvId);
     }
   }
 
@@ -1042,7 +1091,7 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   if (reply.includes('[BOOKED]')) {
     reply = reply.replace(/\[BOOKED\]\s*/gi, '').trim();
     conversations.update(contactId, { booked: true });
-    console.log(`[Webhook] Contact ${contactId} agreed to book — AI paused, awaiting GHL appointment`);
+    console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused, awaiting GHL appointment`);
   }
 
   // Update step
@@ -1050,42 +1099,46 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     conversations.update(contactId, { currentStep: detectedStep });
   }
 
-  // ── 8. Send reply via GHL and persist ─────────────────────────────────────────
+  // Persisted step: prefer Claude's marker, fall back to the contact's last
+  // known step so brain/followups never receive null when we have prior state.
+  const persistStep = detectedStep ?? fresh?.currentStep ?? null;
+
+  // Send reply via GHL and persist
   if (reply) {
     await ghl.sendMessage(contactId, reply);
     conversations.addExchange(contactId, {
       direction: 'outbound',
       body: reply,
-      step: detectedStep,
+      step: persistStep,
       conversationId: resolvedConvId || null,
       variant: contactVariant
     });
-    brain.recordOutbound(contactId, reply, detectedStep, { variant: contactVariant });
-    followups.scheduleSilenceCheck(contactId, detectedStep, reply);
-    console.log(`[Webhook] Sent to ${contactId} (step ${detectedStep}, variant ${contactVariant || 'none'}): "${reply.slice(0, 80)}"`);
+    brain.recordOutbound(contactId, reply, persistStep, { variant: contactVariant });
+    followups.scheduleSilenceCheck(contactId, persistStep, reply);
+    console.log(`[AiGen] Sent to ${contactId} (step ${persistStep}, variant ${contactVariant || 'none'}): "${reply.slice(0, 80)}"`);
   }
 
-  // ── 9. Send address confirmation (if queued from PRACTICE_DETECTED) ───────────
+  // Send address confirmation (if queued from PRACTICE_DETECTED)
   if (confirmationMsg) {
     try {
       await ghl.sendMessage(contactId, confirmationMsg);
       conversations.addExchange(contactId, {
         direction: 'outbound',
         body: confirmationMsg,
-        step: 4,
+        step: persistStep,
         conversationId: resolvedConvId || null,
         variant: contactVariant
       });
-      brain.recordOutbound(contactId, confirmationMsg, 4, { variant: contactVariant });
-      followups.scheduleSilenceCheck(contactId, 4, confirmationMsg);
-      console.log(`[Webhook] Sent address confirmation to ${contactId}: "${confirmationMsg.slice(0, 80)}"`);
+      brain.recordOutbound(contactId, confirmationMsg, persistStep, { variant: contactVariant });
+      followups.scheduleSilenceCheck(contactId, persistStep, confirmationMsg);
+      console.log(`[AiGen] Sent address confirmation to ${contactId}: "${confirmationMsg.slice(0, 80)}"`);
     } catch (err) {
-      console.error('[Webhook] Failed to send confirmation — falling back to auto Step 3:', err.message);
+      console.error('[AiGen] Failed to send confirmation — falling back to AI auto-trigger:', err.message);
       const ct = conversations.get(contactId);
       if (ct?.confirmationPending) {
         conversations.update(contactId, { confirmationPending: null });
         startResearchAndScan(contactId, ct.practiceName, ct.practiceStreet || '', ct.practiceCity || ct.city || '', null);
-        scheduleStep3AutoSend(contactId, resolvedConvId);
+        scheduleAiResponseAfterResearch(contactId, resolvedConvId);
       }
     }
   }
@@ -1153,7 +1206,7 @@ async function handleConfirmationReply(contactId, messageBody, contact, resolved
   conversations.update(contactId, { confirmationPending: null });
   console.log(`[Webhook] Practice confirmed for ${contactId}: ${pending.name}`);
   startResearchAndScan(contactId, pending.name, contact.practiceStreet || '', pending.city, pending.placeId);
-  scheduleStep3AutoSend(contactId, resolvedConvId, true);
+  scheduleAiResponseAfterResearch(contactId, resolvedConvId, { skipReplyGuard: true });
 }
 
 async function handleRetryName(contactId, messageBody, contact, resolvedConvId) {
@@ -1191,9 +1244,10 @@ async function handleRetryName(contactId, messageBody, contact, resolvedConvId) 
     }
   }
 
-  // No result or no API key — proceed without confirmation
+  // No result or no API key — proceed without confirmation; let Claude take
+  // the next turn once research completes.
   startResearchAndScan(contactId, retryInput, '', city, null);
-  scheduleStep3AutoSend(contactId, resolvedConvId, true);
+  scheduleAiResponseAfterResearch(contactId, resolvedConvId, { skipReplyGuard: true });
 }
 
 // ─── Message History Builders ─────────────────────────────────────────────────
