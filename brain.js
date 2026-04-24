@@ -25,6 +25,7 @@ function _rowToMsg(row) {
     stage:               row.stage,
     step:                row.step,
     message_type:        row.message_type,
+    messageClass:        row.message_class,
     position:            row.position,
     had_enrichment_data: row.had_enrichment_data,
     variant:             row.variant,
@@ -48,6 +49,7 @@ async function initFromDb() {
         stage               TEXT,
         step                INTEGER,
         message_type        TEXT,
+        message_class       TEXT,
         position            INTEGER,
         had_enrichment_data BOOLEAN,
         variant             TEXT,
@@ -58,6 +60,10 @@ async function initFromDb() {
         booked              BOOLEAN NOT NULL DEFAULT false
       )
     `);
+    // Migrate existing tables that predate the message_class column
+    await pool.query(
+      `ALTER TABLE brain_messages ADD COLUMN IF NOT EXISTS message_class TEXT`
+    ).catch(() => {});
 
     const { rows } = await pool.query('SELECT * FROM brain_messages ORDER BY timestamp ASC');
     if (rows.length === 0) {
@@ -152,14 +158,15 @@ async function _backfillFromExchanges() {
 function _dbInsertMessage(msg) {
   pool.query(
     `INSERT INTO brain_messages
-       (id, contact_id, direction, body, stage, step, message_type, position,
+       (id, contact_id, direction, body, stage, step, message_type, message_class, position,
         had_enrichment_data, variant, length_chars, timestamp,
         replied_within_48h, replied_at, booked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT (id) DO NOTHING`,
     [
       msg.id, msg.contactId, msg.direction, msg.body || null,
       msg.stage || null, msg.step ?? null, msg.message_type || null,
+      msg.messageClass || null,
       msg.position ?? null, msg.had_enrichment_data ?? null,
       msg.variant ?? null, msg.length_chars ?? null,
       msg.timestamp, msg.repliedWithin48h ?? null,
@@ -176,6 +183,7 @@ function _dbUpdateMessage(id, updates) {
   if ('repliedAt'        in updates) { fields.push(`replied_at = $${idx++}`);          vals.push(updates.repliedAt); }
   if ('booked'           in updates) { fields.push(`booked = $${idx++}`);               vals.push(updates.booked); }
   if ('message_type'     in updates) { fields.push(`message_type = $${idx++}`);         vals.push(updates.message_type); }
+  if ('messageClass'     in updates) { fields.push(`message_class = $${idx++}`);        vals.push(updates.messageClass); }
   if ('position'         in updates) { fields.push(`position = $${idx++}`);             vals.push(updates.position); }
   if ('had_enrichment_data' in updates) { fields.push(`had_enrichment_data = $${idx++}`); vals.push(updates.had_enrichment_data); }
   if ('length_chars'     in updates) { fields.push(`length_chars = $${idx++}`);         vals.push(updates.length_chars); }
@@ -326,6 +334,7 @@ function patternKey(body) {
  * @param {number|null} step   — conversation step (from [STEP:N])
  * @param {object} [meta]      — optional metadata
  * @param {string} [meta.message_type]       — 'scripted-sms' | 'followup-sms' | 'email'
+ * @param {string} [meta.messageClass]       — 'conversation'|'hook-1'|'hook-2'|'hook-3'|'nurture'
  * @param {number|null} [meta.position]      — follow-up hook/nurture position (1-5)
  * @param {boolean|null} [meta.had_enrichment_data] — research data was available when sent
  * @param {string|null} [meta.variant]       — A/B/C discovery script variant (null = legacy)
@@ -342,6 +351,7 @@ function recordOutbound(contactId, body, step, meta = {}) {
     stage,
     step: step ?? null,
     message_type,
+    messageClass: meta.messageClass ?? null,
     position: meta.position ?? null,
     had_enrichment_data: meta.had_enrichment_data ?? null,
     variant: meta.variant ?? null,
@@ -589,6 +599,25 @@ function runAnalysis() {
     distinctContacts: new Set(outbound.map(m => m.contactId)).size
   };
 
+  // ── Hook-position performance summary ──────────────────────────────────────
+  // Counts settled outbound messages grouped by messageClass (hook-1, hook-2, etc.)
+  const HOOK_CLASSES = ['conversation', 'hook-1', 'hook-2', 'hook-3', 'nurture'];
+  const hookPositionStats = {};
+  for (const cls of HOOK_CLASSES) {
+    hookPositionStats[cls] = { sent: 0, replied: 0, replyRate: null };
+  }
+  for (const m of outbound) {
+    const cls = m.messageClass;
+    if (!cls || !hookPositionStats[cls]) continue;
+    hookPositionStats[cls].sent++;
+    if (m.repliedWithin48h) hookPositionStats[cls].replied++;
+  }
+  for (const cls of HOOK_CLASSES) {
+    const h = hookPositionStats[cls];
+    h.replyRate = h.sent > 0 ? Math.round((h.replied / h.sent) * 100) : null;
+  }
+  winning.hookPositionStats = hookPositionStats;
+
   // ── Variant performance summary ────────────────────────────────────────────
   // Group settled scripted-sms messages by variant and store alongside patterns.
   // `messages` at this point already has pending > 48h resolved to repliedWithin48h:false.
@@ -688,6 +717,24 @@ function getStats(contactIdFilter) {
     if (msg.booked) byStage[stage].booked++;
   }
 
+  // Per-hook-position breakdown — only settled messages (repliedWithin48h !== null)
+  // are counted so pending sends don't dilute the reply rate, matching runAnalysis().
+  const HOOK_CLASSES = ['conversation', 'hook-1', 'hook-2', 'hook-3', 'nurture'];
+  const byHookPosition = {};
+  for (const cls of HOOK_CLASSES) {
+    byHookPosition[cls] = { sent: 0, replied: 0, replyRate: null };
+  }
+  for (const msg of settled) {
+    const cls = msg.messageClass;
+    if (!cls || !byHookPosition[cls]) continue;
+    byHookPosition[cls].sent++;
+    if (msg.repliedWithin48h) byHookPosition[cls].replied++;
+  }
+  for (const cls of HOOK_CLASSES) {
+    const b = byHookPosition[cls];
+    b.replyRate = b.sent > 0 ? Math.round((b.replied / b.sent) * 100) : null;
+  }
+
   return {
     totals: {
       outbound:             outbound.length,
@@ -700,6 +747,7 @@ function getStats(contactIdFilter) {
       contactsReplied4Plus: contactsReplied4Plus
     },
     byStage,
+    byHookPosition,
     winningPatterns: patterns,
     patternsUpdatedAt: patterns._meta?.analyzedAt || null
   };

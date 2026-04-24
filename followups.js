@@ -636,7 +636,7 @@ async function sendHook1Static(job, contact) {
   });
 
   brain.recordOutbound(job.contactId, hookText, contact.currentStep ?? null,
-    { message_type: 'followup-sms', position: 1 });
+    { message_type: 'followup-sms', messageClass: 'hook-1', position: 1 });
 
   const tz = job.context?.timezone || getContactTimezone(job.contactId);
   updateJob(job.id, { status: 'sent', sentAt: Date.now() });
@@ -687,8 +687,12 @@ async function sendFollowUp(job, contact, position) {
     type: `followup-${job.type}-pos${position}`
   });
 
+  const messageClass = job.type === 'nurture' || position >= 4 ? 'nurture'
+    : position === 3 ? 'hook-3'
+    : position === 2 ? 'hook-2'
+    : 'hook-1';
   brain.recordOutbound(job.contactId, hookText, freshContact.currentStep ?? null,
-    { message_type: 'followup-sms', position });
+    { message_type: 'followup-sms', messageClass, position });
 
   const tz = job.context?.timezone || getContactTimezone(job.contactId);
   updateJob(job.id, { status: 'sent', sentAt: Date.now() });
