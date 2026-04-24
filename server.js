@@ -2528,7 +2528,7 @@ async function loadBrain() {
 
     function rateClass(r) { return r >= 30 ? 'rate-good' : r >= 10 ? 'rate-mid' : 'rate-low'; }
 
-    const stages = Object.entries(data.byStage || {});
+    const stages = Object.entries(data.byStage || {}).filter(([stage]) => stage !== 'unknown');
     const stageHtml = stages.length > 0 ? \`
       <div class="table-wrap"><table class="perf-table" style="margin-top:20px">
         <thead><tr>
