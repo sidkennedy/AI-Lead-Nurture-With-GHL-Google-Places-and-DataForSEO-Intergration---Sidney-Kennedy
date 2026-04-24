@@ -2795,7 +2795,7 @@ ${DEV_MODE ? `<div style="position:fixed;top:0;left:0;right:0;z-index:9999;backg
   <div class="queue-summary" id="queue-summary"></div>
   <div id="followups-content"><div class="loading">Loading&hellip;</div></div>
   <div style="margin-top:14px;border-top:1px solid rgba(203,213,225,.6);padding-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <button id="pause-btn" class="action-btn action-btn-warn" onclick="togglePause()">⏸ Pause Everything</button>
+    <button id="pause-btn" class="action-btn action-btn-warn" onclick="togglePause()" disabled>… loading</button>
     <button class="action-btn action-btn-info" onclick="syncBookings(this)">↻ Sync Bookings from GHL</button>
     <span id="rebuild-status" style="font-size:12px;color:#94a3b8;font-weight:500"></span>
   </div>
@@ -3026,6 +3026,27 @@ async function rebuildQueue() {
 }
 
 let _schedulerPaused = false;
+function applyPauseButtonState(paused) {
+  _schedulerPaused = !!paused;
+  const btn = document.getElementById('pause-btn');
+  if (!btn) return;
+  btn.textContent = _schedulerPaused ? '▶ Resume Everything' : '⏸ Pause Everything';
+  btn.style.background = _schedulerPaused ? '#1a3a1a' : '#3a1a1a';
+  btn.style.color = _schedulerPaused ? '#4ade80' : '#f87171';
+  btn.style.borderColor = _schedulerPaused ? '#2d5a2d' : '#5a2d2d';
+}
+async function refreshPauseState() {
+  try {
+    const res = await fetch('/api/admin/paused', { headers: { 'x-admin-key': ADMIN_KEY } });
+    if (!res.ok) return;
+    const data = await res.json();
+    applyPauseButtonState(data.paused);
+    const btn = document.getElementById('pause-btn');
+    if (btn) btn.disabled = false;
+  } catch (err) {
+    /* ignore — button stays in its previous state */
+  }
+}
 async function togglePause() {
   const btn = document.getElementById('pause-btn');
   const status = document.getElementById('rebuild-status');
@@ -3034,11 +3055,7 @@ async function togglePause() {
     const endpoint = _schedulerPaused ? '/api/admin/resume' : '/api/admin/pause';
     const res = await fetch(endpoint, { method: 'POST', headers: { 'x-admin-key': ADMIN_KEY } });
     const data = await res.json();
-    _schedulerPaused = data.paused;
-    btn.textContent = _schedulerPaused ? '▶ Resume Scheduler' : '⏸ Pause Scheduler';
-    btn.style.background = _schedulerPaused ? '#1a3a1a' : '#3a1a1a';
-    btn.style.color = _schedulerPaused ? '#4ade80' : '#f87171';
-    btn.style.borderColor = _schedulerPaused ? '#2d5a2d' : '#5a2d2d';
+    applyPauseButtonState(data.paused);
     status.textContent = _schedulerPaused ? 'Scheduler paused — no texts will fire' : 'Scheduler resumed';
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
@@ -3385,7 +3402,7 @@ async function resetSpend(contactId) {
   }
 }
 
-function loadAll() { loadFollowups(); loadBrain(); loadSpend(); }
+function loadAll() { loadFollowups(); loadBrain(); loadSpend(); refreshPauseState(); }
 loadAll();
 
 let secondsLeft = 30;
