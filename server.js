@@ -1449,6 +1449,21 @@ app.post('/api/admin/cancel-sms-jobs', requireAdmin, (req, res) => {
   res.json({ ok: true, cancelled });
 });
 
+// ─── Admin: Replay a missed inbound message ───────────────────────────────────
+app.post('/api/admin/replay-inbound', requireAdmin, async (req, res) => {
+  const { contactId, messageBody } = req.body || {};
+  if (!contactId || !messageBody) {
+    return res.status(400).json({ error: 'contactId and messageBody are required' });
+  }
+  res.json({ ok: true, message: 'Replay triggered — AI is generating a response now.' });
+  try {
+    await handleInbound({ contactId, conversationId: null, messageBody, firstName: '', city: '', phone: '' });
+    console.log(`[Admin] Replay-inbound complete for ${contactId}`);
+  } catch (err) {
+    console.error(`[Admin] Replay-inbound error for ${contactId}:`, err.message);
+  }
+});
+
 app.post('/api/admin/backfill-bookings', requireAdmin, async (req, res) => {
   const CALENDAR_IDS = [
     'TEJPVxOMR0rrTwxgavfc','lLa9R176JhNHeXrmyhc4','xadAGwKudYEsVjbEYR0n',
@@ -2188,6 +2203,23 @@ tr:hover td{background:#18181c}
     <button onclick="syncBookings(this)" style="background:#1a2a3a;color:#60a5fa;border:1px solid #2d4a5a;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">↻ Sync Bookings from GHL</button>
     <span id="rebuild-status" style="font-size:12px;color:#888"></span>
   </div>
+
+  <div style="margin-top:20px;border-top:1px solid #2a2a2a;padding-top:18px">
+    <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Manual AI Trigger</div>
+    <div style="font-size:13px;color:#555;margin-bottom:14px">Use this if the server was down when a contact replied and the AI never responded. Search by name, confirm their message, and trigger the AI reply now.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+      <div style="position:relative">
+        <input id="replay-name-input" type="text" placeholder="Search contact name…" oninput="replaySearchContacts(this.value)"
+          style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:13px;width:220px;outline:none">
+        <div id="replay-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e1e1e;border:1px solid #333;border-top:none;border-radius:0 0 6px 6px;z-index:100;max-height:180px;overflow-y:auto"></div>
+      </div>
+      <input id="replay-msg-input" type="text" placeholder="Their message (e.g. Go)" value="Go"
+        style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:13px;width:180px;outline:none">
+      <button onclick="triggerReplayInbound()" style="background:#1a3a2a;color:#4ade80;border:1px solid #2d5a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">Trigger AI Response</button>
+    </div>
+    <div id="replay-selected" style="font-size:12px;color:#888;margin-top:8px"></div>
+    <div id="replay-status" style="font-size:13px;margin-top:8px"></div>
+  </div>
 </div>
 
 <!-- ── Spend Monitor ── -->
@@ -2450,6 +2482,59 @@ function switchTab(tab, btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
   renderQueue();
+}
+
+// ── Manual AI Trigger (replay missed inbound) ──
+let _replayContactId = null;
+
+function replaySearchContacts(query) {
+  const dd = document.getElementById('replay-dropdown');
+  const selEl = document.getElementById('replay-selected');
+  _replayContactId = null;
+  selEl.textContent = '';
+  if (!query || query.length < 2) { dd.style.display = 'none'; return; }
+  const q = query.toLowerCase();
+  const matches = Object.values(contactMap)
+    .filter(c => ((c.firstName || '') + ' ' + (c.lastName || '')).toLowerCase().includes(q))
+    .slice(0, 8);
+  if (matches.length === 0) { dd.style.display = 'none'; return; }
+  dd.style.display = 'block';
+  dd.innerHTML = matches.map(c => {
+    const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || c.contactId;
+    return \`<div onclick="replaySelectContact('\${c.contactId}','\${escHtml(name)}')"
+      style="padding:8px 12px;font-size:13px;color:#ccc;cursor:pointer;border-bottom:1px solid #2a2a2a"
+      onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background=''">\${escHtml(name)}</div>\`;
+  }).join('');
+}
+
+function replaySelectContact(contactId, name) {
+  _replayContactId = contactId;
+  document.getElementById('replay-name-input').value = name;
+  document.getElementById('replay-dropdown').style.display = 'none';
+  document.getElementById('replay-selected').textContent = 'Selected: ' + name + ' (' + contactId + ')';
+}
+
+async function triggerReplayInbound() {
+  const statusEl = document.getElementById('replay-status');
+  const msgBody = document.getElementById('replay-msg-input').value.trim();
+  if (!_replayContactId) { statusEl.style.color = '#f87171'; statusEl.textContent = 'Please search and select a contact first.'; return; }
+  if (!msgBody) { statusEl.style.color = '#f87171'; statusEl.textContent = 'Please enter their message.'; return; }
+  statusEl.style.color = '#888';
+  statusEl.textContent = 'Triggering AI response…';
+  try {
+    const res = await fetch('/api/admin/replay-inbound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
+      body: JSON.stringify({ contactId: _replayContactId, messageBody: msgBody })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    statusEl.style.color = '#4ade80';
+    statusEl.textContent = 'Done — AI response sent. Check GHL to confirm.';
+  } catch (err) {
+    statusEl.style.color = '#f87171';
+    statusEl.textContent = 'Error: ' + err.message;
+  }
 }
 
 /* ── Load follow-up queue + contacts ── */
