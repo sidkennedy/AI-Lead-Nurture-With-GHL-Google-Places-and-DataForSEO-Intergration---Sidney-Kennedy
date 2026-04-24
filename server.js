@@ -1496,19 +1496,10 @@ app.post('/api/admin/enrollment-sync', requireAdmin, async (req, res) => {
       if (assignedVariant) conversations.update(contactId, { variant: assignedVariant });
     }
 
-    const tz = followups.estimateTimezone(city);
-    followups.scheduleSilenceCheck(contactId, 0, '');
-
-    if (email) {
-      const emailSendAt = followups.nextEmailWindowMs(Date.now() + 5 * 60 * 1000, tz);
-      const hasEmail1 = followups.getAllJobs().some(
-        j => j.contactId === contactId && j.type === 'email-hook' && j.position === 1 &&
-             (j.status === 'pending' || j.status === 'sent')
-      );
-      if (!hasEmail1) followups.scheduleJob({ contactId, type: 'email-hook', position: 1, sendAt: emailSendAt, context: { timezone: tz } });
-    }
-
-    console.log(`[Admin] Enrollment sync: enrolled ${contactId} (${firstName})`);
+    // Do NOT schedule a silence check — these contacts haven't been messaged yet.
+    // GHL's automation will send the intro message; when they reply, the inbound
+    // webhook will take over automatically.
+    console.log(`[Admin] Enrollment sync: enrolled ${contactId} (${firstName}) — waiting for reply`);
     enrolled.push({ firstName, contactId });
   }
 
@@ -2301,7 +2292,7 @@ tr:hover td{background:#18181c}
 
   <div style="margin-top:20px;border-top:1px solid #2a2a2a;padding-top:18px">
     <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Enrollment Sync</div>
-    <div style="font-size:13px;color:#555;margin-bottom:14px">Pulls everyone with a specific GHL tag and enrolls any who aren't in the system yet. Use this if the server was down and contacts were missed. Enter the exact tag name from GHL.</div>
+    <div style="font-size:13px;color:#555;margin-bottom:14px">Pulls everyone with a specific GHL tag and registers any who aren't in the system yet. Does <strong style="color:#888">not</strong> send any messages — GHL's automation handles the intro. When contacts reply, the AI takes over automatically. Enter the exact tag name from GHL.</div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
       <input id="sync-tag-input" type="text" placeholder="GHL tag name (e.g. Powered Up AI)"
         style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:13px;width:260px;outline:none">
