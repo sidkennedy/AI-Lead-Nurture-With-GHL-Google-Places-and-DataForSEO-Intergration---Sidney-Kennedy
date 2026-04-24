@@ -1965,8 +1965,11 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
       // Enforce strict cap after insert so we never exceed the maximum
       _gcPlaygroundSessions();
     } else {
-      // Allow swapping variant or contact info mid-session
-      if (variant) session.variant = norm.variant;
+      // Allow swapping variant or contact info mid-session. Always honor the
+      // normalized result (not just when `variant` was explicitly sent) so a
+      // request that supplies only `customPrompt` correctly flips the session
+      // into CUSTOM mode.
+      session.variant = norm.variant;
       if (norm.variant === 'CUSTOM') session.customPrompt = norm.customPrompt;
       if (firstName !== undefined) session.firstName = (firstName || 'Test').trim() || 'Test';
       if (city !== undefined) session.city = (city || '').trim();
