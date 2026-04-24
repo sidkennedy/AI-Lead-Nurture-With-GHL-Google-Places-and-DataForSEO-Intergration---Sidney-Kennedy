@@ -1914,14 +1914,18 @@ function _extractPlaygroundMarkers(text, session) {
 const _PLAYGROUND_CUSTOM_PROMPT_MAX = 50_000;
 function _normalizePlaygroundVariant(variant, customPrompt) {
   const v = (variant || 'A').toUpperCase();
-  if (v === 'CUSTOM') {
-    const trimmed = String(customPrompt || '').trim();
-    if (!trimmed) return { error: 'customPrompt is required when variant is CUSTOM' };
-    if (trimmed.length > _PLAYGROUND_CUSTOM_PROMPT_MAX) {
+  const trimmedCustom = String(customPrompt || '').trim();
+
+  // Per the task contract: when customPrompt is present and non-empty, use it
+  // as the system prompt regardless of the variant field. variant === 'CUSTOM'
+  // requires a non-empty customPrompt; otherwise variant must be A/B/C.
+  if (trimmedCustom) {
+    if (trimmedCustom.length > _PLAYGROUND_CUSTOM_PROMPT_MAX) {
       return { error: `customPrompt is too long (max ${_PLAYGROUND_CUSTOM_PROMPT_MAX} chars)` };
     }
-    return { variant: 'CUSTOM', customPrompt: trimmed };
+    return { variant: 'CUSTOM', customPrompt: trimmedCustom };
   }
+  if (v === 'CUSTOM') return { error: 'customPrompt is required when variant is CUSTOM' };
   if (!['A', 'B', 'C'].includes(v)) return { error: 'variant must be A, B, C, or CUSTOM' };
   return { variant: v };
 }
