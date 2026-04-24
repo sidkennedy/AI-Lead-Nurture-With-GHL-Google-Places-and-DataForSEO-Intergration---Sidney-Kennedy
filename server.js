@@ -1946,11 +1946,19 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
     if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
 
-    const norm = _normalizePlaygroundVariant(variant, customPrompt);
-    if (norm.error) return res.status(400).json({ error: norm.error });
-
-    // Load or create session
+    // For existing sessions, only validate/apply variant fields if the caller
+    // actually sent them. This preserves the prior session.variant when a
+    // non-UI caller omits both fields (the in-page client always sends both,
+    // so this is purely defensive).
+    const variantFieldsSent = variant !== undefined || customPrompt !== undefined;
+    let norm = null;
     let session = _playgroundSessions.get(sessionId);
+
+    if (!session || variantFieldsSent) {
+      norm = _normalizePlaygroundVariant(variant, customPrompt);
+      if (norm.error) return res.status(400).json({ error: norm.error });
+    }
+
     if (!session) {
       session = {
         variant: norm.variant,
@@ -1965,12 +1973,13 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
       // Enforce strict cap after insert so we never exceed the maximum
       _gcPlaygroundSessions();
     } else {
-      // Allow swapping variant or contact info mid-session. Always honor the
-      // normalized result (not just when `variant` was explicitly sent) so a
-      // request that supplies only `customPrompt` correctly flips the session
-      // into CUSTOM mode.
-      session.variant = norm.variant;
-      if (norm.variant === 'CUSTOM') session.customPrompt = norm.customPrompt;
+      // Allow swapping variant or contact info mid-session. When variant
+      // fields were sent, honor the normalized result (so a request supplying
+      // only `customPrompt` correctly flips into CUSTOM mode).
+      if (variantFieldsSent) {
+        session.variant = norm.variant;
+        if (norm.variant === 'CUSTOM') session.customPrompt = norm.customPrompt;
+      }
       if (firstName !== undefined) session.firstName = (firstName || 'Test').trim() || 'Test';
       if (city !== undefined) session.city = (city || '').trim();
     }
