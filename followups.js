@@ -1157,6 +1157,7 @@ function scheduleSilenceCheck(contactId, currentStep, lastOutboundBody) {
 module.exports = {
   startScheduler,
   scheduleSilenceCheck,
+  scheduleNext,
   cancelContactJobs,
   cancelEmailJobs,
   cancelAllPendingSmsJobs,

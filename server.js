@@ -406,10 +406,123 @@ app.post('/webhooks/ghl/inbound', async (req, res) => {
   enqueueJob({ contactId, conversationId, messageBody, firstName, city, phone });
 });
 
+// ─── AI Opener (sent immediately on enrollment) ───────────────────────────────
+// Replaces the legacy GHL static intro + 5-min static "Hey, you there?" hook.
+// The AI generates the very first SMS using the contact's assigned variant
+// prompt so each variant can A/B-test its own opener wording.
+//
+// Recorded as `followup-hook-pos1` so the silence-check dedup guard treats it
+// as Hook 1 already sent. Then schedules a no-op silence check (defensive)
+// and queues Hook 2 via scheduleNext so the follow-up cadence continues.
+async function generateAndSendOpener(contactId) {
+  try {
+    const contact = conversations.get(contactId);
+    if (!contact) {
+      console.log(`[Opener] Skipping — contact ${contactId} not found`);
+      return;
+    }
+    if (contact.booked) {
+      console.log(`[Opener] Skipping ${contactId} — already booked`);
+      return;
+    }
+    const tags = (contact.tags || []).map(t =>
+      (typeof t === 'string' ? t : (t.name || '')).toLowerCase()
+    );
+    if (tags.includes('disable ai')) {
+      console.log(`[Opener] Skipping ${contactId} — Disable AI tag`);
+      return;
+    }
+
+    // Dedup: if the opener has already been sent for this contact, do nothing.
+    const exchanges = contact.exchanges || [];
+    if (exchanges.some(e => e.type === 'followup-hook-pos1')) {
+      console.log(`[Opener] Skipping ${contactId} — opener already sent`);
+      return;
+    }
+
+    // Build system prompt — same shape as handleInbound but with no live
+    // research/scan data yet (none exists at enrollment time) and CURRENT STEP=0.
+    const variant = contact.variant || null;
+    const variantPromptKey = variant ? `conversationPrompt.${variant}` : 'conversationPrompt';
+    let systemContent = prompts.get(variantPromptKey) || prompts.get('conversationPrompt');
+    if (contact.firstName) systemContent += `\n\nPROSPECT FIRST NAME: ${contact.firstName}`;
+    if (contact.city)      systemContent += `\n\nPROSPECT CITY: ${contact.city}`;
+    systemContent += `\n\nCURRENT STEP: 0 (continue from here)`;
+    const stage = brain.classifyStage(0);
+    const winningSnippet = brain.buildWinningPatternsPrompt(stage, 'sms_scripted');
+    if (winningSnippet) systemContent += winningSnippet;
+
+    // Single trigger message — never persisted. The AI sees this only at
+    // generation time so Anthropic's user/assistant ordering is satisfied.
+    const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 512,
+      system: systemContent,
+      messages: [{ role: 'user', content: 'Begin the conversation now.' }]
+    });
+    spend.track(contactId, model, response.usage);
+
+    let openerText = response.content[0]?.text?.trim() || '';
+    if (!openerText) {
+      console.error(`[Opener] Empty AI response for ${contactId} — skipping send`);
+      return;
+    }
+
+    // Strip any hidden markers before sending — the prospect must never see them.
+    const stepMatch = openerText.match(/\[STEP:(\d+)\]/i);
+    const detectedStep = stepMatch ? parseInt(stepMatch[1], 10) : null;
+    openerText = openerText
+      .replace(/\[STEP:\d+\]\s*/gi, '')
+      .replace(/\[PRACTICE_DETECTED:[^\]]+\]\s*/gi, '')
+      .replace(/\[BOOKED\]\s*/gi, '')
+      .trim();
+    if (!openerText) {
+      console.error(`[Opener] Stripped to empty for ${contactId} — skipping send`);
+      return;
+    }
+
+    // Send via GHL — ghl.sendMessage gates DEV_MODE internally and returns a
+    // stub instead of hitting the API, so DEV_MODE leads still log the opener
+    // without sending anything.
+    const sendResult = await ghl.sendMessage(contactId, openerText);
+    if (!sendResult) {
+      console.error(`[Opener] GHL send returned null for ${contactId} — not persisting`);
+      return;
+    }
+
+    // Persist as Hook 1 so the silence-check dedup correctly suppresses
+    // the legacy "Hey, you there?" static fallback.
+    conversations.addExchange(contactId, {
+      direction: 'outbound',
+      body: openerText,
+      step: detectedStep ?? 0,
+      conversationId: null,
+      type: 'followup-hook-pos1',
+      variant
+    });
+    if (detectedStep !== null) {
+      conversations.update(contactId, { currentStep: detectedStep });
+    }
+    brain.recordOutbound(contactId, openerText, detectedStep ?? 0,
+      { message_type: 'followup-sms', messageClass: 'hook-1', position: 1, variant });
+
+    // Defensive silence-check (will be a no-op due to followup-hook-pos1
+    // dedup), then queue Hook 2 so the cadence continues if no reply.
+    const tz = followups.estimateTimezone(contact.city || '');
+    followups.scheduleSilenceCheck(contactId, detectedStep ?? 0, openerText);
+    followups.scheduleNext(contactId, 1, detectedStep ?? 0, openerText, tz);
+
+    console.log(`[Opener] AI opener sent to ${contactId} (variant ${variant || 'none'}): "${openerText.slice(0, 80)}"`);
+  } catch (err) {
+    console.error(`[Opener] Failed for ${contactId}:`, err.message);
+  }
+}
+
 // ─── GHL Enrolled Webhook ─────────────────────────────────────────────────────
-// Fires the moment GHL sends the static intro message to a new lead.
-// We create the local contact record and schedule the 5-min silence check
-// (and first email-hook) immediately — without waiting for them to reply.
+// Fires the moment a new lead is enrolled in GHL. We create the local contact
+// record, assign an A/B/C variant, and immediately fire-and-forget the
+// AI-generated opener (which acts as Hook 1 of the follow-up sequence).
 
 app.post('/webhooks/ghl/enrolled', async (req, res) => {
   // Use the same auth logic as /inbound: open mode when GHL_WEBHOOK_SECRET is not set,
@@ -471,13 +584,17 @@ app.post('/webhooks/ghl/enrolled', async (req, res) => {
     return;
   }
 
-  // Guard: dedup — if a pending silence check already exists, skip
+  // Guard: dedup — skip if either a pending silence-check job already exists
+  // OR an opener (followup-hook-pos1) has already been recorded as outbound.
+  // Both indicate the contact has already been enrolled in the AI flow.
   const jobs = followups.getAllJobs('pending');
   const hasSilenceCheck = jobs.some(
     j => j.contactId === contactId && j.type === 'silence-check'
   );
-  if (hasSilenceCheck) {
-    console.log(`[Enrolled] Skipping ${contactId} — silence check already pending`);
+  const priorExchanges = existing?.exchanges || [];
+  const hasOpener = priorExchanges.some(e => e.type === 'followup-hook-pos1');
+  if (hasSilenceCheck || hasOpener) {
+    console.log(`[Enrolled] Skipping ${contactId} — ${hasOpener ? 'opener already sent' : 'silence check already pending'}`);
     return;
   }
 
@@ -497,11 +614,15 @@ app.post('/webhooks/ghl/enrolled', async (req, res) => {
 
   const tz = followups.estimateTimezone(city);
 
-  // Schedule 5-min silence check (triggers "Hey, you there?" SMS)
-  followups.scheduleSilenceCheck(contactId, 0, '');
+  // Fire-and-forget the AI opener. The helper handles its own try/catch and
+  // schedules the silence-check + Hook 2 internally, so the webhook response
+  // is unaffected by Claude latency or failures.
+  generateAndSendOpener(contactId).catch(err => {
+    console.error(`[Enrolled] Opener task crashed for ${contactId}:`, err.message);
+  });
 
   // Schedule Email #1 at next email window starting from 5min from now
-  // (so silence check always fires before the email window is checked)
+  // (so the opener has time to land before the email window is checked)
   if (email) {
     const emailSendAt = followups.nextEmailWindowMs(Date.now() + 5 * 60 * 1000, tz);
     const allJobs = followups.getAllJobs();
@@ -521,7 +642,7 @@ app.post('/webhooks/ghl/enrolled', async (req, res) => {
     }
   }
 
-  console.log(`[Enrolled] Contact ${contactId} enrolled — silence check + email queued`);
+  console.log(`[Enrolled] Contact ${contactId} enrolled — opener queued${email ? ' + email scheduled' : ''}`);
 });
 
 // ─── GHL Appointment Webhook ──────────────────────────────────────────────────
@@ -1524,10 +1645,13 @@ app.post('/api/admin/enrollment-sync', requireAdmin, async (req, res) => {
       if (assignedVariant) conversations.update(contactId, { variant: assignedVariant });
     }
 
-    // Do NOT schedule a silence check — these contacts haven't been messaged yet.
-    // GHL's automation will send the intro message; when they reply, the inbound
-    // webhook will take over automatically.
-    console.log(`[Admin] Enrollment sync: enrolled ${contactId} (${firstName}) — waiting for reply`);
+    // Fire the AI opener — same flow as the GHL enrolled webhook. The helper
+    // gates DEV_MODE inside ghl.sendMessage and dedupes via the
+    // `followup-hook-pos1` exchange marker, so a second sync run is safe.
+    generateAndSendOpener(contactId).catch(err => {
+      console.error(`[Admin] Opener task crashed for ${contactId}:`, err.message);
+    });
+    console.log(`[Admin] Enrollment sync: enrolled ${contactId} (${firstName}) — opener queued`);
     enrolled.push({ firstName, contactId });
   }
 
@@ -1564,7 +1688,10 @@ app.post('/api/admin/manual-enroll', requireAdmin, async (req, res) => {
   }
 
   const tz = followups.estimateTimezone(city);
-  followups.scheduleSilenceCheck(contactId, 0, '');
+  // Fire the AI opener (same flow as the GHL enrolled webhook).
+  generateAndSendOpener(contactId).catch(err => {
+    console.error(`[Admin] Manual-enroll opener task crashed for ${contactId}:`, err.message);
+  });
 
   if (email) {
     const emailSendAt = followups.nextEmailWindowMs(Date.now() + 5 * 60 * 1000, tz);
@@ -1577,7 +1704,7 @@ app.post('/api/admin/manual-enroll', requireAdmin, async (req, res) => {
 
   console.log(`[Admin] Manual enroll complete for ${contactId} (${firstName})`);
   res.json({ ok: true, firstName, variant: conversations.get(contactId)?.variant || null,
-    message: `${firstName || contactId} enrolled — initial message sends within 5 minutes.` });
+    message: `${firstName || contactId} enrolled — opener will send shortly.` });
 });
 
 // ─── Admin: Replay a missed inbound message ───────────────────────────────────
