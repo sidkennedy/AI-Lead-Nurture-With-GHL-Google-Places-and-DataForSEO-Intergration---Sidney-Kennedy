@@ -25,6 +25,19 @@ const { runEnrollment } = require('./enrollment');
 const spend = require('./spend');
 const optouts = require('./optouts');
 
+// ─── Dev Mode ─────────────────────────────────────────────────────────────────
+// Set DEV_MODE=true in your local .env to disable the scheduler and GHL sends.
+// Production deployments should never set this variable.
+const DEV_MODE = process.env.DEV_MODE === 'true';
+if (DEV_MODE) {
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  DEV MODE — scheduler + GHL sends are disabled   ║');
+  console.log('║  Safe to test UI changes against production data  ║');
+  console.log('╚══════════════════════════════════════════════════╝');
+} else {
+  console.log('[Mode] Production — all systems active');
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
@@ -1987,7 +2000,11 @@ app.listen(PORT, () => {
     console.log('[Prompts] Variant prompt keys seeded to DB');
   }).catch(err => console.error('[Prompts] Startup DB sync error:', err.message));
   brain.startScheduledAnalysis();
-  followups.startScheduler();
+  if (DEV_MODE) {
+    console.log('[Followups] DEV MODE — scheduler not started (no jobs will fire locally)');
+  } else {
+    followups.startScheduler();
+  }
   Promise.all([bootstrapStateFromGHL(), conversations.whenReady()])
     .then(() => {
       console.log('[Bootstrap] GHL state and conversations ready.');
@@ -2210,6 +2227,11 @@ tr:hover td{background:#18181c}
 </style>
 </head>
 <body>
+
+${DEV_MODE ? `<div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#7c2d12;color:#fed7aa;font-size:13px;font-weight:700;text-align:center;padding:8px 16px;letter-spacing:.04em;border-bottom:2px solid #c2410c">
+  ⚠ DEV MODE — Scheduler &amp; GHL sends are disabled. No real messages will go out.
+</div>
+<div style="height:37px"></div>` : ''}
 
 <div class="header">
   <div class="header-left">

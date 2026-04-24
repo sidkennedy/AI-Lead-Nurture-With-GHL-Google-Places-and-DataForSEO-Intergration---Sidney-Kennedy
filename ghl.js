@@ -43,6 +43,10 @@ async function fetchMessages(conversationId, limit = 100) {
 }
 
 async function sendMessage(contactId, body) {
+  if (process.env.DEV_MODE === 'true') {
+    console.log(`[GHL][DEV MODE] Would have sent SMS to ${contactId}: "${body.slice(0, 120)}"`);
+    return { id: 'dev-mode-stub', messageId: 'dev-mode-stub' };
+  }
   try {
     const payload = {
       type: 'SMS',
@@ -183,6 +187,11 @@ async function sendEmail(contactId, subject, body) {
   if (!contact?.email) {
     console.log(`[GHL] sendEmail skipped for ${contactId} — no email on local record`);
     return null;
+  }
+
+  if (process.env.DEV_MODE === 'true') {
+    console.log(`[GHL][DEV MODE] Would have sent email to ${contactId} (${contact.email}): "${subject}"`);
+    return { id: 'dev-mode-stub', messageId: 'dev-mode-stub' };
   }
 
   try {
