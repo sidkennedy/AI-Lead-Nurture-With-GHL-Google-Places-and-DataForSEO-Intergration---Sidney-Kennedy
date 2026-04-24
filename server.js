@@ -4729,6 +4729,11 @@ try {
 // next user reply should trigger the real scan, so we swap the loading
 // indicator from "AI is typing…" to "Running visibility scan…".
 let AWAITING_CONFIRM_REPLY = false;
+// Reference to a "Scan running in background…" bubble that was rendered on
+// a previous turn whose response came back with scanStatus='running'. We
+// hold onto it so the next response (which will report 'complete' or
+// 'failed') can update it in place instead of leaving stale text on screen.
+let ACTIVE_SCAN_BUBBLE = null;
 
 document.querySelectorAll('.vpill').forEach(b => {
   const v = b.dataset.v;
@@ -4891,22 +4896,32 @@ async function sendMsg() {
       if (scanStatusBubble) scanStatusBubble.remove();
       appendBubble('ai', '\u26A0 Error: ' + (data.error || res.statusText));
     } else {
-      // Update the scan-status bubble in place to reflect outcome. The
-      // server returns 'running' when the scan was just kicked off in the
-      // background (typical on the "yes" turn) and 'complete'/'failed'
-      // when a follow-up turn awaited it.
-      if (scanStatusBubble) {
+      // Two scan bubbles to reconcile against the server's scanStatus:
+      //   - scanStatusBubble: just rendered above for THIS turn (kick-off)
+      //   - ACTIVE_SCAN_BUBBLE: a 'running' bubble left over from an
+      //     earlier turn whose scan hadn't completed yet
+      // For each turn, exactly one of them might be relevant.
+      const bubble = scanStatusBubble || ACTIVE_SCAN_BUBBLE;
+      if (bubble) {
         if (data.scanStatus === 'complete') {
-          scanStatusBubble.classList.add('complete');
-          scanStatusBubble.innerHTML = '\u2713 Visibility scan complete \u2014 real Google Maps numbers loaded.';
+          bubble.classList.remove('running');
+          bubble.classList.add('complete');
+          bubble.innerHTML = '\u2713 Visibility scan complete \u2014 real Google Maps numbers loaded.';
+          ACTIVE_SCAN_BUBBLE = null;
         } else if (data.scanStatus === 'failed') {
-          scanStatusBubble.classList.add('failed');
-          scanStatusBubble.innerHTML = '\u26A0 Scan failed or timed out \u2014 falling back to seed numbers so the conversation can continue.';
+          bubble.classList.remove('running');
+          bubble.classList.add('failed');
+          bubble.innerHTML = '\u26A0 Scan failed or timed out \u2014 falling back to seed numbers so the conversation can continue.';
+          ACTIVE_SCAN_BUBBLE = null;
         } else if (data.scanStatus === 'running') {
-          scanStatusBubble.classList.add('running');
-          scanStatusBubble.innerHTML = '\u23F3 Scan running in background \u2014 real Maps numbers will land on the next turn.';
-        } else {
-          // Toggle was switched mid-flow or no scan happened — drop the bubble.
+          bubble.classList.add('running');
+          bubble.innerHTML = '\u23F3 Scan running in background \u2014 real Maps numbers will land on the next turn.';
+          // Keep tracking it so the NEXT turn's response can finalize it.
+          ACTIVE_SCAN_BUBBLE = bubble;
+        } else if (scanStatusBubble) {
+          // Newly created bubble but server reported no scan happening
+          // (e.g. operator flipped to Stub mid-flow). Drop it; leave any
+          // pre-existing ACTIVE_SCAN_BUBBLE alone.
           scanStatusBubble.remove();
         }
       }
@@ -4944,6 +4959,7 @@ async function startConvo() {
   // Brand-new conversation — clear any leftover scan-indicator armed state
   // from a previous run in this tab.
   AWAITING_CONFIRM_REPLY = false;
+  ACTIVE_SCAN_BUBBLE = null;
   if (startBtn) {
     startBtn.disabled = true;
     startBtn.textContent = 'Composing\u2026';
@@ -5016,6 +5032,7 @@ async function resetConvo() {
   // Drop any armed scan-indicator state — the next turn is on a fresh
   // session and won't be a confirmation reply.
   AWAITING_CONFIRM_REPLY = false;
+  ACTIVE_SCAN_BUBBLE = null;
   document.getElementById('messages').innerHTML =
     '<div class="empty-state" id="empty-state">Conversation reset. Type a message below or hit ▶ to have the AI open first.' +
     '<div class="start-cta">' +
