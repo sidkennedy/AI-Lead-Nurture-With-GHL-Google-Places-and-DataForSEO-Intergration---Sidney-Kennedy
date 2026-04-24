@@ -1,0 +1,50 @@
+{
+  "sms_scripted": {
+    "_meta": {
+      "analyzedAt": 1777011640144,
+      "totalMessages": 2,
+      "distinctContacts": 2
+    }
+  },
+  "_meta": {
+    "analyzedAt": 1777011640144,
+    "totalMessages": 2,
+    "distinctContacts": 2
+  },
+  "variantStats": [
+    {
+      "variant": "A",
+      "contactsAssigned": 0,
+      "sent": 0,
+      "replied": 0,
+      "replyRate": null,
+      "booked": 0,
+      "bookingRate": null,
+      "analyzedAt": 1777011640144
+    },
+    {
+      "variant": "B",
+      "contactsAssigned": 0,
+      "sent": 0,
+      "replied": 0,
+      "replyRate": null,
+      "booked": 0,
+      "bookingRate": null,
+      "analyzedAt": 1777011640144
+    },
+    {
+      "variant": "C",
+      "contactsAssigned": 0,
+      "sent": 0,
+      "replied": 0,
+      "replyRate": null,
+      "booked": 0,
+      "bookingRate": null,
+      "analyzedAt": 1777011640144
+    }
+  ],
+  "_qualitativeInsights": {
+    "text": "I cannot provide meaningful insights from this data because the performance metrics are incomplete. The send counts show as \"undefined\" and both reply rates and booking rates display as \"null%\" across all pattern clusters.\n\nTo generate actionable coaching insights, I need actual numeric data showing how many messages were sent per pattern and what percentage resulted in replies and bookings. Please re-run the data export or check the source system to ensure the metrics are properly populated, then share the updated statistics.",
+    "generatedAt": 1777011644194
+  }
+}

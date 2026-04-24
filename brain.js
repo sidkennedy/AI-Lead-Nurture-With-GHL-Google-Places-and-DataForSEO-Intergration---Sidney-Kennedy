@@ -598,7 +598,7 @@ async function runLlmAnalysis(patterns) {
     const flat = Object.entries(patterns)
       .filter(([k]) => !['_meta', '_qualitativeInsights', ...CHANNELS].includes(k))
       .map(([stage, pats]) => `Stage: ${stage}\n${pats.map(p =>
-        `  Pattern: "${p.example.slice(0, 100)}..." | Sends: ${p.count} | Reply: ${p.replyRate}% | Booked: ${p.bookingRate}%`
+        `  Pattern: "${(p.example || '').slice(0, 100)}..." | Sends: ${p.count} | Reply: ${p.replyRate}% | Booked: ${p.bookingRate}%`
       ).join('\n')}`)
       .join('\n\n');
     if (flat) summaryParts.push(flat);
