@@ -414,7 +414,19 @@ app.post('/webhooks/ghl/inbound', async (req, res) => {
 // Recorded as `followup-hook-pos1` so the silence-check dedup guard treats it
 // as Hook 1 already sent. Then schedules a no-op silence check (defensive)
 // and queues Hook 2 via scheduleNext so the follow-up cadence continues.
+
+// In-progress guard — protects against duplicate enrollment webhooks racing
+// before the first opener's `followup-hook-pos1` exchange has been persisted.
+// Persisted dedup (the followup-hook-pos1 check) covers the long-tail case;
+// this Set covers the small window between Claude call and exchange write.
+const _openerInProgress = new Set();
+
 async function generateAndSendOpener(contactId) {
+  if (_openerInProgress.has(contactId)) {
+    console.log(`[Opener] Skipping ${contactId} — opener generation already in progress`);
+    return;
+  }
+  _openerInProgress.add(contactId);
   try {
     const contact = conversations.get(contactId);
     if (!contact) {
@@ -482,13 +494,20 @@ async function generateAndSendOpener(contactId) {
       return;
     }
 
-    // Send via GHL — ghl.sendMessage gates DEV_MODE internally and returns a
-    // stub instead of hitting the API, so DEV_MODE leads still log the opener
-    // without sending anything.
-    const sendResult = await ghl.sendMessage(contactId, openerText);
-    if (!sendResult) {
-      console.error(`[Opener] GHL send returned null for ${contactId} — not persisting`);
-      return;
+    // Send via GHL — explicitly gated on DEV_MODE so the opener is generated
+    // and logged in dev but never hits the GHL API. (ghl.sendMessage also
+    // gates DEV_MODE internally; this outer gate matches the explicit pattern
+    // used elsewhere in the codebase and makes the dev-vs-prod path obvious.)
+    let sendResult;
+    if (DEV_MODE) {
+      console.log(`[Opener][DEV MODE] Generated opener for ${contactId} (variant ${variant || 'none'}), not sending: "${openerText.slice(0, 120)}"`);
+      sendResult = { id: 'dev-mode-stub' };
+    } else {
+      sendResult = await ghl.sendMessage(contactId, openerText);
+      if (!sendResult) {
+        console.error(`[Opener] GHL send returned null for ${contactId} — not persisting`);
+        return;
+      }
     }
 
     // Persist as Hook 1 so the silence-check dedup correctly suppresses
@@ -516,6 +535,8 @@ async function generateAndSendOpener(contactId) {
     console.log(`[Opener] AI opener sent to ${contactId} (variant ${variant || 'none'}): "${openerText.slice(0, 80)}"`);
   } catch (err) {
     console.error(`[Opener] Failed for ${contactId}:`, err.message);
+  } finally {
+    _openerInProgress.delete(contactId);
   }
 }
 
