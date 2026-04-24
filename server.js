@@ -28,7 +28,7 @@ const optouts = require('./optouts');
 // ─── Dev Mode ─────────────────────────────────────────────────────────────────
 // Set DEV_MODE=true in your local .env to disable the scheduler and GHL sends.
 // Production deployments should never set this variable.
-const DEV_MODE = process.env.DEV_MODE === 'true';
+const { DEV_MODE } = require('./devmode');
 if (DEV_MODE) {
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║  DEV MODE — scheduler + GHL sends are disabled   ║');

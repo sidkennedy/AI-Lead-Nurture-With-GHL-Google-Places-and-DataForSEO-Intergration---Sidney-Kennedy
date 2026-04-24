@@ -1,5 +1,6 @@
 const BASE = 'https://services.leadconnectorhq.com';
 const conversations = require('./conversations');
+const { DEV_MODE } = require('./devmode');
 
 function headers() {
   return {
@@ -43,7 +44,7 @@ async function fetchMessages(conversationId, limit = 100) {
 }
 
 async function sendMessage(contactId, body) {
-  if (process.env.DEV_MODE === 'true') {
+  if (DEV_MODE) {
     console.log(`[GHL][DEV MODE] Would have sent SMS to ${contactId}: "${body.slice(0, 120)}"`);
     return { id: 'dev-mode-stub', messageId: 'dev-mode-stub' };
   }
@@ -189,7 +190,7 @@ async function sendEmail(contactId, subject, body) {
     return null;
   }
 
-  if (process.env.DEV_MODE === 'true') {
+  if (DEV_MODE) {
     console.log(`[GHL][DEV MODE] Would have sent email to ${contactId} (${contact.email}): "${subject}"`);
     return { id: 'dev-mode-stub', messageId: 'dev-mode-stub' };
   }
