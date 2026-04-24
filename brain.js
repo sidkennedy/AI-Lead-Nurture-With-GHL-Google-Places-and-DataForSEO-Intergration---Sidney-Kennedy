@@ -450,6 +450,19 @@ function backfillMessages(messages) {
     if (m.position          === undefined) updates.position          = null;
     if (m.had_enrichment_data === undefined) updates.had_enrichment_data = null;
     if (m.length_chars      === undefined) updates.length_chars      = (m.body || '').length;
+    // Derive messageClass from position for followup-sms records that are missing it
+    const effectiveType     = updates.message_type ?? m.message_type;
+    const effectivePosition = updates.position     ?? m.position;
+    if (
+      (m.messageClass === undefined || m.messageClass === null) &&
+      effectiveType === 'followup-sms' &&
+      effectivePosition !== null && effectivePosition !== undefined
+    ) {
+      updates.messageClass = effectivePosition >= 4 ? 'nurture'
+        : effectivePosition === 3               ? 'hook-3'
+        : effectivePosition === 2               ? 'hook-2'
+        : 'hook-1';
+    }
     if (Object.keys(updates).length > 0) {
       anyChanged = true;
       return { ...m, ...updates };
@@ -500,6 +513,7 @@ function runAnalysis() {
         if (orig.position          !== updated.position)          updates.position          = updated.position;
         if (orig.had_enrichment_data !== updated.had_enrichment_data) updates.had_enrichment_data = updated.had_enrichment_data;
         if (orig.length_chars      !== updated.length_chars)      updates.length_chars      = updated.length_chars;
+        if (orig.messageClass      !== updated.messageClass)      updates.messageClass      = updated.messageClass;
         if (Object.keys(updates).length > 0) _dbUpdateMessage(updated.id, updates);
       }
     }
