@@ -1,0 +1,14 @@
+The biggest failure modes in prompts like this, roughly in order of how often they bite you:
+1. State amnesia — the #1 culprit
+The model has no persistent memory. Every turn it re-reads the whole conversation and re-decides where it is. If the conversation gets long or messy, it can miscount steps or lose track. The step markers help, but you could make it stronger by adding an explicit instruction like: “Before composing every reply, identify the last [STEP:N] you sent. Your next message must be [STEP:N+1] or higher. State this internally before writing.”
+2. The Maps loop is fragile
+You’re telling the model “don’t send anything during the Maps loop — the system handles it.” But if the system’s bridge message doesn’t look exactly like what the model expects, it may jump in anyway. Consider adding: “If you are unsure whether the Maps loop is resolved, wait. Default to silence over sending.”
+3. Double-question creep
+Even with your rules, the model will occasionally bundle two questions into one message when it’s trying to be efficient. A simple addition: “Count the question marks in your message before sending. If there are two or more, remove one.”
+4. Reframe getting out of hand
+Sometimes the model over-validates and the reframe becomes a mini-paragraph. You could cap it: “Reframes are maximum 2 sentences. If you’re writing a third, cut it.”
+5. Step 7 hallucinating data
+Even with “never fabricate numbers,” under pressure to sound specific the model sometimes invents plausible-looking review counts. Worth adding: “If you are not 100% certain a number came from LIVE RESEARCH DATA, do not include it. Vague is better than fabricated.”
+6. Tone drift over long conversations
+After 10+ turns the model sometimes gets chattier or more formal. A one-liner helps: “Maintain the same casual, direct tone from message 1 through message 9. Do not become warmer or more formal as the conversation progresses.”
+The single highest-leverage fix is probably making the step-tracking instruction more mechanical — something like forcing it to explicitly identify current step before generating output. That alone catches about 60% of weird behavior
