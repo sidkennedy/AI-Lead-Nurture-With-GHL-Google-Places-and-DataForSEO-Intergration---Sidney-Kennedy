@@ -1870,22 +1870,87 @@ app.post('/admin/playground/reset', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Playground helpers (shared by /message and /start) ─────────────────────
+function _buildPlaygroundSystemPrompt(session) {
+  let systemContent;
+  if (session.variant === 'CUSTOM') {
+    systemContent = String(session.customPrompt || '').trim();
+  } else {
+    const variantPromptKey = `conversationPrompt.${session.variant}`;
+    systemContent = prompts.get(variantPromptKey) || prompts.get('conversationPrompt');
+  }
+  if (session.firstName) systemContent += `\n\nPROSPECT FIRST NAME: ${session.firstName}`;
+  if (session.city)      systemContent += `\n\nPROSPECT CITY: ${session.city}`;
+  systemContent += `\n\nCURRENT STEP: ${session.currentStep} (continue from here)`;
+
+  const stage = brain.classifyStage(session.currentStep);
+  const winningSnippet = brain.buildWinningPatternsPrompt(stage, 'sms_scripted');
+  if (winningSnippet) systemContent += winningSnippet;
+  return systemContent;
+}
+
+function _extractPlaygroundMarkers(text, session) {
+  const markers = [];
+  let display = text;
+  const stepMatch = display.match(/\[STEP:(\d+)\]/i);
+  if (stepMatch) {
+    const detectedStep = parseInt(stepMatch[1], 10);
+    session.currentStep = detectedStep;
+    markers.push({ type: 'STEP', value: detectedStep });
+    display = display.replace(/\[STEP:\d+\]\s*/gi, '').trim();
+  }
+  const practiceMatch = display.match(/\[PRACTICE_DETECTED:([^\]]+)\]/i);
+  if (practiceMatch) {
+    markers.push({ type: 'PRACTICE_DETECTED', value: practiceMatch[1] });
+    display = display.replace(/\[PRACTICE_DETECTED:[^\]]+\]\s*/i, '').trim();
+  }
+  if (display.includes('[BOOKED]')) {
+    markers.push({ type: 'BOOKED', value: true });
+    display = display.replace(/\[BOOKED\]\s*/gi, '').trim();
+  }
+  return { display, markers };
+}
+
+const _PLAYGROUND_CUSTOM_PROMPT_MAX = 50_000;
+function _normalizePlaygroundVariant(variant, customPrompt) {
+  const v = (variant || 'A').toUpperCase();
+  if (v === 'CUSTOM') {
+    const trimmed = String(customPrompt || '').trim();
+    if (!trimmed) return { error: 'customPrompt is required when variant is CUSTOM' };
+    if (trimmed.length > _PLAYGROUND_CUSTOM_PROMPT_MAX) {
+      return { error: `customPrompt is too long (max ${_PLAYGROUND_CUSTOM_PROMPT_MAX} chars)` };
+    }
+    return { variant: 'CUSTOM', customPrompt: trimmed };
+  }
+  if (!['A', 'B', 'C'].includes(v)) return { error: 'variant must be A, B, C, or CUSTOM' };
+  return { variant: v };
+}
+
+function _calcPlaygroundCost(usage) {
+  try {
+    const tokenCost = (usage?.input_tokens || 0) * 3 / 1_000_000
+                   + (usage?.output_tokens || 0) * 15 / 1_000_000;
+    return Math.round(tokenCost * 10000) / 10000;
+  } catch { return null; }
+}
+
 app.post('/admin/playground/message', requireAdmin, async (req, res) => {
   try {
     _gcPlaygroundSessions();
 
-    const { sessionId, message, variant, firstName, city } = req.body || {};
+    const { sessionId, message, variant, customPrompt, firstName, city } = req.body || {};
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
     if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
 
-    const v = (variant || 'A').toUpperCase();
-    if (!['A', 'B', 'C'].includes(v)) return res.status(400).json({ error: 'variant must be A, B, or C' });
+    const norm = _normalizePlaygroundVariant(variant, customPrompt);
+    if (norm.error) return res.status(400).json({ error: norm.error });
 
     // Load or create session
     let session = _playgroundSessions.get(sessionId);
     if (!session) {
       session = {
-        variant: v,
+        variant: norm.variant,
+        customPrompt: norm.customPrompt || '',
         firstName: (firstName || 'Test').trim() || 'Test',
         city: (city || '').trim(),
         currentStep: 0,
@@ -1897,7 +1962,8 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
       _gcPlaygroundSessions();
     } else {
       // Allow swapping variant or contact info mid-session
-      if (variant) session.variant = v;
+      if (variant) session.variant = norm.variant;
+      if (norm.variant === 'CUSTOM') session.customPrompt = norm.customPrompt;
       if (firstName !== undefined) session.firstName = (firstName || 'Test').trim() || 'Test';
       if (city !== undefined) session.city = (city || '').trim();
     }
@@ -1907,16 +1973,7 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
     session.messages.push({ role: 'user', content: message });
 
     // ── Build system prompt — mirrors the live handleInbound pipeline ──
-    const variantPromptKey = `conversationPrompt.${session.variant}`;
-    let systemContent = prompts.get(variantPromptKey) || prompts.get('conversationPrompt');
-    if (session.firstName) systemContent += `\n\nPROSPECT FIRST NAME: ${session.firstName}`;
-    if (session.city)      systemContent += `\n\nPROSPECT CITY: ${session.city}`;
-    systemContent += `\n\nCURRENT STEP: ${session.currentStep} (continue from here)`;
-
-    // Inject the same winning patterns production sees
-    const stage = brain.classifyStage(session.currentStep);
-    const winningSnippet = brain.buildWinningPatternsPrompt(stage, 'sms_scripted');
-    if (winningSnippet) systemContent += winningSnippet;
+    const systemContent = _buildPlaygroundSystemPrompt(session);
 
     // ── Call Claude ──
     const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
@@ -1929,41 +1986,13 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
     });
     const elapsedMs = Date.now() - t0;
 
-    let raw = response.content[0]?.text?.trim() || '';
-    let display = raw;
-
-    // Extract markers (so the user can see what the AI emits)
-    const markers = [];
-    const stepMatch = display.match(/\[STEP:(\d+)\]/i);
-    if (stepMatch) {
-      const detectedStep = parseInt(stepMatch[1], 10);
-      session.currentStep = detectedStep;
-      markers.push({ type: 'STEP', value: detectedStep });
-      display = display.replace(/\[STEP:\d+\]\s*/gi, '').trim();
-    }
-    const practiceMatch = display.match(/\[PRACTICE_DETECTED:([^\]]+)\]/i);
-    if (practiceMatch) {
-      markers.push({ type: 'PRACTICE_DETECTED', value: practiceMatch[1] });
-      display = display.replace(/\[PRACTICE_DETECTED:[^\]]+\]\s*/i, '').trim();
-    }
-    if (display.includes('[BOOKED]')) {
-      markers.push({ type: 'BOOKED', value: true });
-      display = display.replace(/\[BOOKED\]\s*/gi, '').trim();
-    }
+    const raw = response.content[0]?.text?.trim() || '';
+    const { display, markers } = _extractPlaygroundMarkers(raw, session);
 
     // Append assistant message to history (use display version so future turns
     // don't re-include markers — same as production behavior, which strips them
     // before storing in conversations.addExchange)
     session.messages.push({ role: 'assistant', content: display });
-
-    // Cost calc — reuse spend.js's price table without writing to DB
-    const cost = (function() {
-      try {
-        const tokenCost = (response.usage?.input_tokens || 0) * 3 / 1_000_000
-                       + (response.usage?.output_tokens || 0) * 15 / 1_000_000;
-        return Math.round(tokenCost * 10000) / 10000;
-      } catch { return null; }
-    })();
 
     res.json({
       ok: true,
@@ -1977,11 +2006,86 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
         output: response.usage?.output_tokens || 0
       },
       elapsedMs,
-      estCost: cost,
+      estCost: _calcPlaygroundCost(response.usage),
       systemPromptPreview: systemContent.slice(0, 500) + (systemContent.length > 500 ? '…' : '')
     });
   } catch (err) {
     console.error('[Playground] Error:', err);
+    res.status(500).json({ error: err.message || 'Internal error' });
+  }
+});
+
+// Generates the AI's opening message — simulates what the live system will
+// do on lead enrollment once the AI-first-enrollment flow ships. Resets the
+// session, calls Claude with a single trigger user-message, and seeds the
+// session with the resulting opener as the assistant's first turn.
+app.post('/admin/playground/start', requireAdmin, async (req, res) => {
+  try {
+    _gcPlaygroundSessions();
+
+    const { sessionId, variant, customPrompt, firstName, city } = req.body || {};
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+
+    const norm = _normalizePlaygroundVariant(variant, customPrompt);
+    if (norm.error) return res.status(400).json({ error: norm.error });
+
+    // Always reset the session — Start represents a brand-new conversation.
+    const session = {
+      variant: norm.variant,
+      customPrompt: norm.customPrompt || '',
+      firstName: (firstName || 'Test').trim() || 'Test',
+      city: (city || '').trim(),
+      currentStep: 0,
+      messages: [],
+      createdAt: Date.now(),
+      lastActivityAt: Date.now()
+    };
+    _playgroundSessions.set(sessionId, session);
+    _gcPlaygroundSessions();
+
+    const systemContent = _buildPlaygroundSystemPrompt(session);
+
+    // Single trigger message — Anthropic API requires a non-empty messages
+    // array, so we send a minimal "begin" instruction. We also store it in
+    // session.messages so subsequent /message calls satisfy the
+    // "first message must be user role" rule.
+    const triggerMessage = 'Begin the conversation now. Generate only the opening SMS message you would send to start the conversation.';
+    const triggerMessages = [{ role: 'user', content: triggerMessage }];
+
+    const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+    const t0 = Date.now();
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 512,
+      system: systemContent,
+      messages: triggerMessages
+    });
+    const elapsedMs = Date.now() - t0;
+
+    const raw = response.content[0]?.text?.trim() || '';
+    const { display, markers } = _extractPlaygroundMarkers(raw, session);
+
+    // Seed the session so the first user reply has valid history.
+    session.messages.push({ role: 'user', content: triggerMessage });
+    session.messages.push({ role: 'assistant', content: display });
+
+    res.json({
+      ok: true,
+      reply: display,
+      raw,
+      markers,
+      currentStep: session.currentStep,
+      variant: session.variant,
+      tokenUsage: {
+        input: response.usage?.input_tokens || 0,
+        output: response.usage?.output_tokens || 0
+      },
+      elapsedMs,
+      estCost: _calcPlaygroundCost(response.usage),
+      systemPromptPreview: systemContent.slice(0, 500) + (systemContent.length > 500 ? '…' : '')
+    });
+  } catch (err) {
+    console.error('[Playground] Start error:', err);
     res.status(500).json({ error: err.message || 'Internal error' });
   }
 });
@@ -3880,7 +3984,19 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
 .vpill.active.A{background:linear-gradient(180deg,#edf2ff,#e0e7ff);color:#374151;border-color:#93c5fd}
 .vpill.active.B{background:linear-gradient(180deg,#fff7ed,#ffedd5);color:#92400e;border-color:#fdba74}
 .vpill.active.C{background:linear-gradient(180deg,#ecfdf5,#d1fae5);color:#065f46;border-color:#6ee7b7}
+.vpill.active.CUSTOM{background:linear-gradient(180deg,#f5f3ff,#ede9fe);color:#5b21b6;border-color:#c4b5fd}
 .vpill.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+.custom-prompt-row{padding:14px 20px;border-bottom:1px solid rgba(203,213,225,.7);background:rgba(245,243,255,.45);display:none}
+.custom-prompt-row.visible{display:block}
+.custom-prompt-row label{display:block;font-size:11px;color:#5b21b6;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.custom-prompt-row textarea{width:100%;background:#fff;border:1px solid rgba(196,181,253,.9);border-radius:12px;color:#0f172a;font-family:'SF Mono',Consolas,monospace;font-size:12px;line-height:1.55;padding:10px 12px;outline:none;resize:vertical;min-height:120px;box-shadow:0 1px 0 rgba(255,255,255,.8) inset}
+.custom-prompt-row textarea:focus{border-color:#8b5cf6;box-shadow:0 0 0 4px rgba(139,92,246,.12)}
+.custom-prompt-row .hint{font-size:11px;color:#7c3aed;margin-top:6px;font-style:italic}
+.start-cta{display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0}
+.btn-start{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:14px 26px;border-radius:999px;border:1px solid rgba(16,185,129,.35);background:linear-gradient(180deg,#28c48a 0%,#0ea56f 100%);color:#fff;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 12px 24px rgba(16,185,129,.22),inset 0 1px 0 rgba(255,255,255,.28)}
+.btn-start:hover:not(:disabled){filter:saturate(1.05) brightness(1.02)}
+.btn-start:disabled{opacity:.5;cursor:default}
+.start-or{font-size:12px;color:#94a3b8;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
 .btn-reset{margin-left:auto;background:#fff;color:#64748b;border:1px solid rgba(203,213,225,.9);padding:10px 16px;border-radius:12px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.04)}
 .btn-reset:hover{color:#0f172a;border-color:#94a3b8}
 .messages{flex:1;padding:26px 24px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:14px;min-height:360px;max-height:520px}
@@ -3918,7 +4034,7 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
 <div class="page-header">
   <div class="badge">Built exclusively for audiology practices</div>
   <h1>Conversation Tester</h1>
-  <p class="subtitle">Talk to the AI as a fake prospect. Pick a variant (A, B, or C) to compare prompts. Real Claude calls run, but nothing writes to the database, no SMS goes out, no follow-ups schedule.</p>
+  <p class="subtitle">Talk to the AI as a fake prospect. Pick a variant (A, B, or C) — or paste a Custom prompt — to compare them. Hit ▶ Start Conversation to have the AI open first, or just type a message yourself. Real Claude calls run, but nothing writes to the database, no SMS goes out, no follow-ups schedule.</p>
   <div class="hero-actions">
     <a class="hero-btn" href="/admin?key=${adminKey}">Back to Dashboard</a>
     <a class="hero-link" href="#messages">See how it works <span>&rarr;</span></a>
@@ -3934,6 +4050,7 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
           <button class="vpill A active" data-v="A" onclick="pickVariant('A')">A</button>
           <button class="vpill B" data-v="B" onclick="pickVariant('B')">B</button>
           <button class="vpill C" data-v="C" onclick="pickVariant('C')">C</button>
+          <button class="vpill CUSTOM" data-v="CUSTOM" onclick="pickVariant('CUSTOM')">Custom</button>
         </div>
       </div>
       <div class="control">
@@ -3946,8 +4063,19 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
       </div>
       <button class="btn-reset" onclick="resetConvo()">Reset</button>
     </div>
+    <div class="custom-prompt-row" id="custom-prompt-row">
+      <label for="custom-prompt">Custom System Prompt</label>
+      <textarea id="custom-prompt" placeholder="Paste any system prompt here. The AI will follow these instructions exactly — no stored variant text is used."></textarea>
+      <div class="hint">In-memory only — never saved. Edit freely between sends.</div>
+    </div>
     <div class="messages" id="messages">
-      <div class="empty-state">Start a conversation by typing a message below — like you would on your phone if a real prospect texted in.<br><br>Try things like "yes", "what's this about", or even rude replies to see how each variant handles them.</div>
+      <div class="empty-state" id="empty-state">
+        Start a conversation by typing a message below — like a real prospect would — or hit the button to have the AI send the opening message first.<br><br>Try replies like "yes", "what's this about", or even rude messages to see how each variant handles them.
+        <div class="start-cta">
+          <button class="btn-start" id="btn-start" onclick="startConvo()">▶ Start Conversation</button>
+          <div class="start-or">— or type below —</div>
+        </div>
+      </div>
     </div>
     <div class="input-row">
       <textarea id="msg-input" placeholder="Type a message as the prospect…" onkeydown="onKeyDown(event)"></textarea>
@@ -3984,6 +4112,8 @@ let SENDING = false;
 
 document.querySelectorAll('.vpill').forEach(b => {
   const v = b.dataset.v;
+  // Custom is always available — it doesn't depend on stored prompts.
+  if (v === 'CUSTOM') return;
   if (ENABLED_VARIANTS.length && !ENABLED_VARIANTS.includes(v)) {
     b.classList.add('disabled');
     b.title = 'Variant ' + v + ' is currently disabled in production. Enable it in Prompt Editor.';
@@ -3995,11 +4125,69 @@ if (ENABLED_VARIANTS.length && !ENABLED_VARIANTS.includes('A')) {
 }
 
 function pickVariant(v) {
+  const previousVariant = VARIANT;
   VARIANT = v;
   document.querySelectorAll('.vpill').forEach(b => {
     b.classList.toggle('active', b.dataset.v === v);
   });
   document.getElementById('s-variant').textContent = v;
+  document.getElementById('custom-prompt-row').classList.toggle('visible', v === 'CUSTOM');
+  // If a conversation is already underway, warn that the prior context is
+  // being kept — variant comparisons are only clean when started from scratch.
+  if (previousVariant && previousVariant !== v && hasConvoStarted()) {
+    appendBubble('ai', '\u2139 Switched to variant ' + v + '. Prior context is kept — click Reset for a clean A/B comparison.');
+  }
+}
+
+function hasConvoStarted() {
+  return !!document.querySelector('#messages .bubble');
+}
+
+function getCustomPrompt() {
+  return document.getElementById('custom-prompt').value;
+}
+
+function buildPayloadBase() {
+  return {
+    sessionId: SESSION_ID,
+    variant: VARIANT,
+    customPrompt: VARIANT === 'CUSTOM' ? getCustomPrompt() : undefined,
+    firstName: document.getElementById('fname').value,
+    city: document.getElementById('city').value
+  };
+}
+
+function validateCustomBeforeSend() {
+  if (VARIANT === 'CUSTOM' && !getCustomPrompt().trim()) {
+    appendBubble('ai', '\u26A0 Paste a custom prompt above before sending.');
+    return false;
+  }
+  return true;
+}
+
+function hideStartCta() {
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.remove();
+}
+
+function applyResponseStats(data) {
+  document.getElementById('s-step').textContent = data.currentStep;
+  document.getElementById('s-elapsed').textContent = (data.elapsedMs / 1000).toFixed(1) + 's';
+  document.getElementById('s-cost').textContent = data.estCost != null ? '$' + data.estCost.toFixed(4) : '\u2014';
+  document.getElementById('s-tokens').textContent = data.tokenUsage.input + ' / ' + data.tokenUsage.output;
+  const ml = document.getElementById('markers-list');
+  ml.innerHTML = '';
+  if (!data.markers || data.markers.length === 0) {
+    ml.innerHTML = '<div class="muted">None this turn</div>';
+  } else {
+    data.markers.forEach(m => {
+      const d = document.createElement('div');
+      d.className = 'marker';
+      d.innerHTML = '<span class="mtag">[' + escapeHtml(m.type) + ']</span>' + escapeHtml(String(m.value));
+      ml.appendChild(d);
+    });
+  }
+  document.getElementById('sys-prev').textContent = data.systemPromptPreview || '';
 }
 
 function onKeyDown(e) {
@@ -4030,10 +4218,12 @@ async function sendMsg() {
   const inp = document.getElementById('msg-input');
   const message = inp.value.trim();
   if (!message) return;
+  if (!validateCustomBeforeSend()) return;
   SENDING = true;
   document.getElementById('btn-send').disabled = true;
   inp.value = '';
 
+  hideStartCta();
   appendBubble('user', message);
   const thinking = appendBubble('ai', 'AI is typing\u2026');
   thinking.classList.add('thinking');
@@ -4042,13 +4232,7 @@ async function sendMsg() {
     const res = await fetch('/admin/playground/message?key=' + encodeURIComponent(ADMIN_KEY), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: SESSION_ID,
-        message,
-        variant: VARIANT,
-        firstName: document.getElementById('fname').value,
-        city: document.getElementById('city').value
-      })
+      body: JSON.stringify(Object.assign(buildPayloadBase(), { message }))
     });
     const data = await res.json();
     thinking.remove();
@@ -4057,23 +4241,7 @@ async function sendMsg() {
     } else {
       const meta = 'Variant ' + data.variant + ' \u00B7 step ' + data.currentStep;
       appendBubble('ai', data.reply || '(empty reply)', meta);
-      document.getElementById('s-step').textContent = data.currentStep;
-      document.getElementById('s-elapsed').textContent = (data.elapsedMs / 1000).toFixed(1) + 's';
-      document.getElementById('s-cost').textContent = data.estCost != null ? '$' + data.estCost.toFixed(4) : '\u2014';
-      document.getElementById('s-tokens').textContent = data.tokenUsage.input + ' / ' + data.tokenUsage.output;
-      const ml = document.getElementById('markers-list');
-      ml.innerHTML = '';
-      if (!data.markers || data.markers.length === 0) {
-        ml.innerHTML = '<div class="muted">None this turn</div>';
-      } else {
-        data.markers.forEach(m => {
-          const d = document.createElement('div');
-          d.className = 'marker';
-          d.innerHTML = '<span class="mtag">[' + escapeHtml(m.type) + ']</span>' + escapeHtml(String(m.value));
-          ml.appendChild(d);
-        });
-      }
-      document.getElementById('sys-prev').textContent = data.systemPromptPreview || '';
+      applyResponseStats(data);
     }
   } catch (err) {
     thinking.remove();
@@ -4085,7 +4253,53 @@ async function sendMsg() {
   }
 }
 
+async function startConvo() {
+  if (SENDING) return;
+  if (!validateCustomBeforeSend()) return;
+  const startBtn = document.getElementById('btn-start');
+  SENDING = true;
+  if (startBtn) startBtn.disabled = true;
+  document.getElementById('btn-send').disabled = true;
+
+  // Render the thinking bubble in place; keep the start CTA visible until we
+  // know the call succeeded so the user can retry on error.
+  const thinking = appendBubble('ai', 'AI is composing the opener\u2026');
+  thinking.classList.add('thinking');
+
+  try {
+    const res = await fetch('/admin/playground/start?key=' + encodeURIComponent(ADMIN_KEY), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPayloadBase())
+    });
+    const data = await res.json();
+    thinking.remove();
+    if (!res.ok) {
+      appendBubble('ai', '\u26A0 Error: ' + (data.error || res.statusText));
+    } else {
+      hideStartCta();
+      const meta = 'Variant ' + data.variant + ' \u00B7 opener \u00B7 step ' + data.currentStep;
+      appendBubble('ai', data.reply || '(empty reply)', meta);
+      applyResponseStats(data);
+    }
+  } catch (err) {
+    thinking.remove();
+    appendBubble('ai', '\u26A0 Network error: ' + err.message);
+  } finally {
+    SENDING = false;
+    if (startBtn) startBtn.disabled = false;
+    document.getElementById('btn-send').disabled = false;
+    document.getElementById('msg-input').focus();
+  }
+}
+
 async function resetConvo() {
+  // Block reset while a Claude call is in flight — otherwise the in-flight
+  // response would land in the new (rotated) session UI and confuse stats.
+  if (SENDING) {
+    appendBubble('ai', '\u2139 Wait for the current reply to finish before resetting.');
+    return;
+  }
   try {
     await fetch('/admin/playground/reset?key=' + encodeURIComponent(ADMIN_KEY), {
       method: 'POST',
@@ -4094,7 +4308,12 @@ async function resetConvo() {
     });
   } catch {}
   SESSION_ID = 'pg-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
-  document.getElementById('messages').innerHTML = '<div class="empty-state">Conversation reset. Start fresh below.</div>';
+  document.getElementById('messages').innerHTML =
+    '<div class="empty-state" id="empty-state">Conversation reset. Type a message below or hit ▶ to have the AI open first.' +
+    '<div class="start-cta">' +
+      '<button class="btn-start" id="btn-start" onclick="startConvo()">▶ Start Conversation</button>' +
+      '<div class="start-or">— or type below —</div>' +
+    '</div></div>';
   document.getElementById('s-step').textContent = '0';
   document.getElementById('s-elapsed').textContent = '\u2014';
   document.getElementById('s-cost').textContent = '\u2014';
