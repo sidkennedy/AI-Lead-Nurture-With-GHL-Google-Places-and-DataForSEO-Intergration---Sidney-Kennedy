@@ -1829,6 +1829,163 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
   }
 });
 
+// ─── Admin: Conversation Tester (Playground) ──────────────────────────────────
+// In-memory chat sandbox. Lets you talk to the AI as a fake prospect using any
+// variant prompt (A/B/C). Reuses the SAME prompt-building + Claude pipeline
+// production uses, but writes NOTHING to the DB, GHL, brain stats, or scheduler.
+// Sessions live in memory only and are cleared on server restart.
+
+const _playgroundSessions = new Map(); // sessionId → { variant, firstName, city, currentStep, messages: [{role,content}], createdAt }
+const _PLAYGROUND_MAX_SESSIONS = 50;
+const _PLAYGROUND_SESSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function _gcPlaygroundSessions() {
+  const cutoff = Date.now() - _PLAYGROUND_SESSION_TTL_MS;
+  for (const [id, s] of _playgroundSessions) {
+    if ((s.lastActivityAt || s.createdAt) < cutoff) _playgroundSessions.delete(id);
+  }
+  // Also cap total sessions
+  if (_playgroundSessions.size > _PLAYGROUND_MAX_SESSIONS) {
+    const sorted = [..._playgroundSessions.entries()].sort((a, b) => (a[1].lastActivityAt || a[1].createdAt) - (b[1].lastActivityAt || b[1].createdAt));
+    const toRemove = sorted.slice(0, _playgroundSessions.size - _PLAYGROUND_MAX_SESSIONS);
+    for (const [id] of toRemove) _playgroundSessions.delete(id);
+  }
+}
+
+app.get('/admin/playground', (req, res) => {
+  if (!process.env.ADMIN_KEY) return res.status(503).send('ADMIN_KEY not configured');
+  const key = req.query.key || req.headers['x-admin-key'];
+  if (!key || key !== process.env.ADMIN_KEY) {
+    return res.status(401).send('Unauthorized. Add ?key=YOUR_ADMIN_KEY to the URL.');
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.send(buildPlaygroundPage(key));
+});
+
+app.post('/admin/playground/reset', requireAdmin, (req, res) => {
+  const { sessionId } = req.body || {};
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  _playgroundSessions.delete(sessionId);
+  res.json({ ok: true });
+});
+
+app.post('/admin/playground/message', requireAdmin, async (req, res) => {
+  try {
+    _gcPlaygroundSessions();
+
+    const { sessionId, message, variant, firstName, city } = req.body || {};
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
+
+    const v = (variant || 'A').toUpperCase();
+    if (!['A', 'B', 'C'].includes(v)) return res.status(400).json({ error: 'variant must be A, B, or C' });
+
+    // Load or create session
+    let session = _playgroundSessions.get(sessionId);
+    if (!session) {
+      session = {
+        variant: v,
+        firstName: (firstName || 'Test').trim() || 'Test',
+        city: (city || '').trim(),
+        currentStep: 0,
+        messages: [],
+        createdAt: Date.now()
+      };
+      _playgroundSessions.set(sessionId, session);
+      // Enforce strict cap after insert so we never exceed the maximum
+      _gcPlaygroundSessions();
+    } else {
+      // Allow swapping variant or contact info mid-session
+      if (variant) session.variant = v;
+      if (firstName !== undefined) session.firstName = (firstName || 'Test').trim() || 'Test';
+      if (city !== undefined) session.city = (city || '').trim();
+    }
+    session.lastActivityAt = Date.now();
+
+    // Append user message to history
+    session.messages.push({ role: 'user', content: message });
+
+    // ── Build system prompt — mirrors the live handleInbound pipeline ──
+    const variantPromptKey = `conversationPrompt.${session.variant}`;
+    let systemContent = prompts.get(variantPromptKey) || prompts.get('conversationPrompt');
+    if (session.firstName) systemContent += `\n\nPROSPECT FIRST NAME: ${session.firstName}`;
+    if (session.city)      systemContent += `\n\nPROSPECT CITY: ${session.city}`;
+    systemContent += `\n\nCURRENT STEP: ${session.currentStep} (continue from here)`;
+
+    // Inject the same winning patterns production sees
+    const stage = brain.classifyStage(session.currentStep);
+    const winningSnippet = brain.buildWinningPatternsPrompt(stage, 'sms_scripted');
+    if (winningSnippet) systemContent += winningSnippet;
+
+    // ── Call Claude ──
+    const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+    const t0 = Date.now();
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 512,
+      system: systemContent,
+      messages: session.messages
+    });
+    const elapsedMs = Date.now() - t0;
+
+    let raw = response.content[0]?.text?.trim() || '';
+    let display = raw;
+
+    // Extract markers (so the user can see what the AI emits)
+    const markers = [];
+    const stepMatch = display.match(/\[STEP:(\d+)\]/i);
+    if (stepMatch) {
+      const detectedStep = parseInt(stepMatch[1], 10);
+      session.currentStep = detectedStep;
+      markers.push({ type: 'STEP', value: detectedStep });
+      display = display.replace(/\[STEP:\d+\]\s*/gi, '').trim();
+    }
+    const practiceMatch = display.match(/\[PRACTICE_DETECTED:([^\]]+)\]/i);
+    if (practiceMatch) {
+      markers.push({ type: 'PRACTICE_DETECTED', value: practiceMatch[1] });
+      display = display.replace(/\[PRACTICE_DETECTED:[^\]]+\]\s*/i, '').trim();
+    }
+    if (display.includes('[BOOKED]')) {
+      markers.push({ type: 'BOOKED', value: true });
+      display = display.replace(/\[BOOKED\]\s*/gi, '').trim();
+    }
+
+    // Append assistant message to history (use display version so future turns
+    // don't re-include markers — same as production behavior, which strips them
+    // before storing in conversations.addExchange)
+    session.messages.push({ role: 'assistant', content: display });
+
+    // Cost calc — reuse spend.js's price table without writing to DB
+    const cost = (function() {
+      try {
+        const tokenCost = (response.usage?.input_tokens || 0) * 3 / 1_000_000
+                       + (response.usage?.output_tokens || 0) * 15 / 1_000_000;
+        return Math.round(tokenCost * 10000) / 10000;
+      } catch { return null; }
+    })();
+
+    res.json({
+      ok: true,
+      reply: display,
+      raw,
+      markers,
+      currentStep: session.currentStep,
+      variant: session.variant,
+      tokenUsage: {
+        input: response.usage?.input_tokens || 0,
+        output: response.usage?.output_tokens || 0
+      },
+      elapsedMs,
+      estCost: cost,
+      systemPromptPreview: systemContent.slice(0, 500) + (systemContent.length > 500 ? '…' : '')
+    });
+  } catch (err) {
+    console.error('[Playground] Error:', err);
+    res.status(500).json({ error: err.message || 'Internal error' });
+  }
+});
+
 // ─── Admin: Lead Enrollment ───────────────────────────────────────────────────
 
 app.get('/admin/enroll', (req, res) => {
@@ -2254,6 +2411,7 @@ ${DEV_MODE ? `<div style="position:fixed;top:0;left:0;right:0;z-index:9999;backg
     <h1>Admin Dashboard</h1>
   </div>
   <div class="header-right">
+    <a class="btn" href="/admin/playground?key=${adminKey}">Conversation Tester &rarr;</a>
     <a class="btn" href="/admin/prompts?key=${adminKey}">Prompt Editor &rarr;</a>
     <a class="btn btn-primary" href="/admin/enroll?key=${adminKey}">Lead Enrollment &rarr;</a>
   </div>
@@ -3634,6 +3792,261 @@ async function doRun() {
   } finally {
     setBusy(false);
   }
+}
+</script>
+</body>
+</html>`;
+}
+
+// ─── Admin: Conversation Tester (Playground) Page ─────────────────────────────
+
+function buildPlaygroundPage(adminKey) {
+  const enabledVariants = prompts.getEnabledVariants();
+  const enabledJson = JSON.stringify(enabledVariants);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conversation Tester — Powered Up AI</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f0f0f;color:#e8e8e8;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:30px 16px 80px}
+.logo{font-size:13px;font-weight:600;letter-spacing:.08em;color:#555;text-transform:uppercase;text-align:center;margin-bottom:20px}
+.back{max-width:1100px;margin:0 auto 20px;display:block}
+.back a{color:#748ffc;font-size:13px;text-decoration:none}
+.page-header{text-align:center;max-width:900px;margin:0 auto 30px}
+h1{font-size:22px;font-weight:700;color:#fff;margin-bottom:8px}
+.subtitle{font-size:14px;color:#666;line-height:1.5}
+.layout{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 320px;gap:24px}
+@media (max-width:880px){.layout{grid-template-columns:1fr}}
+.chat-card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:0;display:flex;flex-direction:column;min-height:560px;overflow:hidden}
+.controls{padding:18px 20px;border-bottom:1px solid #2a2a2a;display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
+.control{display:flex;flex-direction:column;gap:6px}
+.control label{font-size:11px;color:#666;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.control input{background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e8e8e8;font-size:13px;padding:8px 12px;outline:none;width:140px}
+.control input:focus{border-color:#4263eb}
+.variant-pills{display:flex;gap:6px}
+.vpill{padding:7px 14px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid #2a2a2a;background:#111;color:#666}
+.vpill.active.A{background:#3b5bdb22;color:#748ffc;border-color:#4263eb}
+.vpill.active.B{background:rgba(217,119,6,0.18);color:#f59e0b;border-color:#d97706}
+.vpill.active.C{background:rgba(16,185,129,0.18);color:#34d399;border-color:#10b981}
+.vpill.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+.btn-reset{margin-left:auto;background:transparent;color:#888;border:1px solid #333;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+.btn-reset:hover{color:#e8e8e8;border-color:#555}
+.messages{flex:1;padding:24px 24px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:14px;min-height:360px;max-height:520px}
+.empty-state{margin:auto;text-align:center;color:#444;font-size:13px;line-height:1.6;max-width:340px}
+.bubble{max-width:78%;padding:11px 15px;border-radius:18px;font-size:14px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word}
+.bubble.user{align-self:flex-end;background:#4263eb;color:#fff;border-bottom-right-radius:4px}
+.bubble.ai{align-self:flex-start;background:#222;color:#e8e8e8;border-bottom-left-radius:4px;border:1px solid #2a2a2a}
+.bubble.ai.thinking{color:#666;font-style:italic}
+.bubble-meta{font-size:10px;color:#555;margin-top:4px;letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+.bubble.user .bubble-meta{color:rgba(255,255,255,0.6);text-align:right}
+.input-row{padding:14px 16px;border-top:1px solid #2a2a2a;display:flex;gap:10px;background:#151515}
+.input-row textarea{flex:1;background:#111;border:1px solid #2a2a2a;border-radius:10px;color:#e8e8e8;font-family:inherit;font-size:14px;padding:10px 14px;outline:none;resize:none;min-height:42px;max-height:140px;line-height:1.4}
+.input-row textarea:focus{border-color:#4263eb}
+.btn-send{background:#4263eb;color:#fff;border:none;border-radius:10px;padding:0 20px;font-size:14px;font-weight:700;cursor:pointer;align-self:stretch}
+.btn-send:hover:not(:disabled){background:#3b5bdb}
+.btn-send:disabled{opacity:.45;cursor:default}
+.sidebar{display:flex;flex-direction:column;gap:16px}
+.side-card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:14px;padding:18px 20px}
+.side-title{font-size:11px;color:#666;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px}
+.stat-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:#aaa;padding:6px 0}
+.stat-row .v{color:#fff;font-weight:600;font-variant-numeric:tabular-nums}
+.markers-list{display:flex;flex-direction:column;gap:6px}
+.marker{font-size:12px;font-family:'SF Mono',Consolas,monospace;background:#0a0a0a;padding:6px 10px;border-radius:6px;color:#a8b3cf;border:1px solid #1f1f1f;word-break:break-all}
+.marker .mtag{color:#f59e0b;font-weight:700;margin-right:6px}
+.muted{color:#444;font-size:12px;font-style:italic;text-align:center;padding:6px 0}
+.system-prev{font-size:11px;color:#666;font-family:'SF Mono',Consolas,monospace;background:#0a0a0a;padding:10px 12px;border-radius:6px;line-height:1.5;max-height:160px;overflow-y:auto;border:1px solid #1f1f1f;white-space:pre-wrap;word-wrap:break-word}
+.warn-banner{max-width:1100px;margin:0 auto 20px;background:#1e3a8a22;border:1px solid #3b5bdb44;border-radius:10px;padding:12px 16px;font-size:13px;color:#a8b3cf;line-height:1.5}
+.warn-banner b{color:#93c5fd}
+</style>
+</head>
+<body>
+<div class="logo">Powered Up AI</div>
+<div class="back"><a href="/admin?key=${adminKey}">&larr; Back to Dashboard</a></div>
+<div class="page-header">
+  <h1>Conversation Tester</h1>
+  <p class="subtitle">Talk to the AI as a fake prospect. Pick a variant (A, B, or C) to compare prompts. Real Claude calls run, but nothing writes to the database, no SMS goes out, no follow-ups schedule.</p>
+</div>
+<div class="warn-banner"><b>Sandbox mode.</b> This page is fully isolated from your live conversations. Sessions live in memory only and clear when the server restarts.</div>
+<div class="layout">
+  <div class="chat-card">
+    <div class="controls">
+      <div class="control">
+        <label>Variant</label>
+        <div class="variant-pills">
+          <button class="vpill A active" data-v="A" onclick="pickVariant('A')">A</button>
+          <button class="vpill B" data-v="B" onclick="pickVariant('B')">B</button>
+          <button class="vpill C" data-v="C" onclick="pickVariant('C')">C</button>
+        </div>
+      </div>
+      <div class="control">
+        <label>First Name</label>
+        <input id="fname" type="text" value="Test" placeholder="Test"/>
+      </div>
+      <div class="control">
+        <label>City</label>
+        <input id="city" type="text" placeholder="Optional"/>
+      </div>
+      <button class="btn-reset" onclick="resetConvo()">Reset</button>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty-state">Start a conversation by typing a message below — like you would on your phone if a real prospect texted in.<br><br>Try things like "yes", "what's this about", or even rude replies to see how each variant handles them.</div>
+    </div>
+    <div class="input-row">
+      <textarea id="msg-input" placeholder="Type a message as the prospect…" onkeydown="onKeyDown(event)"></textarea>
+      <button class="btn-send" id="btn-send" onclick="sendMsg()">Send</button>
+    </div>
+  </div>
+  <div class="sidebar">
+    <div class="side-card">
+      <div class="side-title">Conversation State</div>
+      <div class="stat-row"><span>Variant</span><span class="v" id="s-variant">A</span></div>
+      <div class="stat-row"><span>Current step</span><span class="v" id="s-step">0</span></div>
+      <div class="stat-row"><span>Last response</span><span class="v" id="s-elapsed">—</span></div>
+      <div class="stat-row"><span>Last cost</span><span class="v" id="s-cost">—</span></div>
+      <div class="stat-row"><span>Tokens (in/out)</span><span class="v" id="s-tokens">—</span></div>
+    </div>
+    <div class="side-card">
+      <div class="side-title">Hidden markers from last reply</div>
+      <div class="markers-list" id="markers-list">
+        <div class="muted">None yet</div>
+      </div>
+    </div>
+    <div class="side-card">
+      <div class="side-title">System prompt preview</div>
+      <div class="system-prev" id="sys-prev">Send a message to see the prompt the AI is reading.</div>
+    </div>
+  </div>
+</div>
+<script>
+const ADMIN_KEY = ${JSON.stringify(adminKey)};
+const ENABLED_VARIANTS = ${enabledJson};
+let SESSION_ID = 'pg-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
+let VARIANT = 'A';
+let SENDING = false;
+
+document.querySelectorAll('.vpill').forEach(b => {
+  const v = b.dataset.v;
+  if (ENABLED_VARIANTS.length && !ENABLED_VARIANTS.includes(v)) {
+    b.classList.add('disabled');
+    b.title = 'Variant ' + v + ' is currently disabled in production. Enable it in Prompt Editor.';
+    b.onclick = null;
+  }
+});
+if (ENABLED_VARIANTS.length && !ENABLED_VARIANTS.includes('A')) {
+  pickVariant(ENABLED_VARIANTS[0]);
+}
+
+function pickVariant(v) {
+  VARIANT = v;
+  document.querySelectorAll('.vpill').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === v);
+  });
+  document.getElementById('s-variant').textContent = v;
+}
+
+function onKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMsg();
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function appendBubble(role, text, meta) {
+  const m = document.getElementById('messages');
+  const empty = m.querySelector('.empty-state');
+  if (empty) empty.remove();
+  const b = document.createElement('div');
+  b.className = 'bubble ' + role;
+  b.innerHTML = escapeHtml(text) + (meta ? '<div class="bubble-meta">' + escapeHtml(meta) + '</div>' : '');
+  m.appendChild(b);
+  m.scrollTop = m.scrollHeight;
+  return b;
+}
+
+async function sendMsg() {
+  if (SENDING) return;
+  const inp = document.getElementById('msg-input');
+  const message = inp.value.trim();
+  if (!message) return;
+  SENDING = true;
+  document.getElementById('btn-send').disabled = true;
+  inp.value = '';
+
+  appendBubble('user', message);
+  const thinking = appendBubble('ai', 'AI is typing\u2026');
+  thinking.classList.add('thinking');
+
+  try {
+    const res = await fetch('/admin/playground/message?key=' + encodeURIComponent(ADMIN_KEY), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: SESSION_ID,
+        message,
+        variant: VARIANT,
+        firstName: document.getElementById('fname').value,
+        city: document.getElementById('city').value
+      })
+    });
+    const data = await res.json();
+    thinking.remove();
+    if (!res.ok) {
+      appendBubble('ai', '\u26A0 Error: ' + (data.error || res.statusText));
+    } else {
+      const meta = 'Variant ' + data.variant + ' \u00B7 step ' + data.currentStep;
+      appendBubble('ai', data.reply || '(empty reply)', meta);
+      document.getElementById('s-step').textContent = data.currentStep;
+      document.getElementById('s-elapsed').textContent = (data.elapsedMs / 1000).toFixed(1) + 's';
+      document.getElementById('s-cost').textContent = data.estCost != null ? '$' + data.estCost.toFixed(4) : '\u2014';
+      document.getElementById('s-tokens').textContent = data.tokenUsage.input + ' / ' + data.tokenUsage.output;
+      const ml = document.getElementById('markers-list');
+      ml.innerHTML = '';
+      if (!data.markers || data.markers.length === 0) {
+        ml.innerHTML = '<div class="muted">None this turn</div>';
+      } else {
+        data.markers.forEach(m => {
+          const d = document.createElement('div');
+          d.className = 'marker';
+          d.innerHTML = '<span class="mtag">[' + escapeHtml(m.type) + ']</span>' + escapeHtml(String(m.value));
+          ml.appendChild(d);
+        });
+      }
+      document.getElementById('sys-prev').textContent = data.systemPromptPreview || '';
+    }
+  } catch (err) {
+    thinking.remove();
+    appendBubble('ai', '\u26A0 Network error: ' + err.message);
+  } finally {
+    SENDING = false;
+    document.getElementById('btn-send').disabled = false;
+    inp.focus();
+  }
+}
+
+async function resetConvo() {
+  try {
+    await fetch('/admin/playground/reset?key=' + encodeURIComponent(ADMIN_KEY), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: SESSION_ID })
+    });
+  } catch {}
+  SESSION_ID = 'pg-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
+  document.getElementById('messages').innerHTML = '<div class="empty-state">Conversation reset. Start fresh below.</div>';
+  document.getElementById('s-step').textContent = '0';
+  document.getElementById('s-elapsed').textContent = '\u2014';
+  document.getElementById('s-cost').textContent = '\u2014';
+  document.getElementById('s-tokens').textContent = '\u2014';
+  document.getElementById('markers-list').innerHTML = '<div class="muted">None yet</div>';
+  document.getElementById('sys-prev').textContent = 'Send a message to see the prompt the AI is reading.';
 }
 </script>
 </body>
