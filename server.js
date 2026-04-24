@@ -2417,10 +2417,15 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
       }
       if (_playgroundIsAffirmative(message)) {
         if (session.useRealScan) {
-          // Kick off the real research + scan pipeline. We don't await here
-          // — the await happens just before the Claude call below so the
-          // pipeline overlaps with prompt building / token accounting.
+          // Kick off the real research + scan pipeline in the background.
+          // This turn's Claude reply is the Step 4 question (which doesn't
+          // need scan data), so we deliberately do NOT await — that keeps
+          // the Send button responsive instead of blocking 10–20s here.
+          // The scan runs while the user is typing their answer to Step 4;
+          // by the next /message turn it's almost always already complete,
+          // and that turn awaits below before generating the data reveal.
           _playgroundFireRealScan(session);
+          session.scanKickedOffThisTurn = true;
         } else {
           _playgroundSeedScanData(session);
         }
@@ -2472,19 +2477,25 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
           systemPromptPreview: '(intercepted: retry confirmation)'
         });
       }
-      // Lookup missed — fire the scan (or fall back to seed) and let Claude
-      // continue with the data reveal.
-      if (session.useRealScan) {
-        _playgroundFireRealScan(session);
-      } else {
-        _playgroundSeedScanData(session);
-      }
+      // Lookup missed on the retry — production flow drops the
+      // confirmation step entirely, so seed scan data and let Claude
+      // continue. We deliberately do NOT fire a real scan here because
+      // there's no affirmative-confirmation signal that the operator
+      // actually wants Maps data for this practice.
+      _playgroundSeedScanData(session);
     }
 
-    // Block the Claude call until any in-flight real scan finishes. This
-    // gives prod-parity behavior: the data-reveal turn always sees real
-    // numbers (or seed fallback if the scan times out / fails).
-    await _playgroundAwaitScanIfRunning(session);
+    // Block the Claude call until any in-flight real scan finishes — but
+    // ONLY on follow-up turns. The turn that fired the scan (the
+    // affirmative-confirm "yes" reply) generates the Step 4 question,
+    // which doesn't need scan data; awaiting there would lock the Send
+    // button for 10–20s. By the next turn the scan is almost always done,
+    // and that's the turn whose data reveal needs the real numbers.
+    if (session.scanKickedOffThisTurn) {
+      session.scanKickedOffThisTurn = false;
+    } else {
+      await _playgroundAwaitScanIfRunning(session);
+    }
 
     // ── Build system prompt — mirrors the live handleInbound pipeline ──
     const systemContent = _buildPlaygroundSystemPrompt(session);
@@ -2542,13 +2553,11 @@ app.post('/admin/playground/message', requireAdmin, async (req, res) => {
           });
         } else if (lookup.skipConfirmation) {
           // No key, no result, or empty marker — match live flow which
-          // skips the confirmation step. Fire scan (or seed) so subsequent
-          // turns can produce the data reveal.
-          if (session.useRealScan) {
-            _playgroundFireRealScan(session);
-          } else {
-            _playgroundSeedScanData(session);
-          }
+          // skips the confirmation step. Without an affirmative-confirm
+          // signal we have no go-ahead to burn real Google Places API
+          // credits, so always seed here regardless of the toggle. Real
+          // scans only ever fire after the operator says yes.
+          _playgroundSeedScanData(session);
         }
       } catch (err) {
         console.error('[Playground] Confirmation simulation error:', err.message);
@@ -4854,16 +4863,18 @@ async function sendMsg() {
   hideStartCta();
   appendBubble('user', message);
   // When a confirmation bubble was just shown and Real scan is on, the
-  // server is about to (a) fire the live Google Places research + scan and
-  // (b) block this turn until that data lands. Surface that as a distinct
-  // status bubble so the user knows the long wait is the scan, not Claude.
-  const willScan = AWAITING_CONFIRM_REPLY && USE_REAL_SCAN;
+  // server will (a) kick off the live Google Places research + scan in
+  // the BACKGROUND and (b) immediately return Claude's Step 4 question.
+  // The scan keeps running while the user types their answer; the next
+  // turn (the data reveal) is what awaits the scan. Surface a distinct
+  // status bubble either way so the operator knows the scan is happening.
+  const willKickOffScan = AWAITING_CONFIRM_REPLY && USE_REAL_SCAN;
   let scanStatusBubble = null;
-  if (willScan) {
-    scanStatusBubble = appendBubble('ai', '\u23F3 Running visibility scan\u2026 (live Google Places research + 25-point grid, ~10\u201320s)');
+  if (willKickOffScan) {
+    scanStatusBubble = appendBubble('ai', '\u23F3 Kicking off live visibility scan\u2026 (Google Places research + 25-point grid, runs in background)');
     scanStatusBubble.classList.add('scan-status');
   }
-  const thinking = appendBubble('ai', willScan ? 'AI is composing the data reveal\u2026' : 'AI is typing\u2026');
+  const thinking = appendBubble('ai', 'AI is typing\u2026');
   thinking.classList.add('thinking');
   // Reset for next turn — the server's response will re-arm if needed.
   AWAITING_CONFIRM_REPLY = false;
@@ -4880,7 +4891,10 @@ async function sendMsg() {
       if (scanStatusBubble) scanStatusBubble.remove();
       appendBubble('ai', '\u26A0 Error: ' + (data.error || res.statusText));
     } else {
-      // Update the scan-status bubble in place to reflect outcome.
+      // Update the scan-status bubble in place to reflect outcome. The
+      // server returns 'running' when the scan was just kicked off in the
+      // background (typical on the "yes" turn) and 'complete'/'failed'
+      // when a follow-up turn awaited it.
       if (scanStatusBubble) {
         if (data.scanStatus === 'complete') {
           scanStatusBubble.classList.add('complete');
@@ -4888,6 +4902,9 @@ async function sendMsg() {
         } else if (data.scanStatus === 'failed') {
           scanStatusBubble.classList.add('failed');
           scanStatusBubble.innerHTML = '\u26A0 Scan failed or timed out \u2014 falling back to seed numbers so the conversation can continue.';
+        } else if (data.scanStatus === 'running') {
+          scanStatusBubble.classList.add('running');
+          scanStatusBubble.innerHTML = '\u23F3 Scan running in background \u2014 real Maps numbers will land on the next turn.';
         } else {
           // Toggle was switched mid-flow or no scan happened — drop the bubble.
           scanStatusBubble.remove();
