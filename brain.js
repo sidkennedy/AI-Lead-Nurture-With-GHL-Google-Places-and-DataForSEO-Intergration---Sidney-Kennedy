@@ -49,6 +49,8 @@ async function initFromDb() {
     console.error('[Brain] DB init error:', err.message, '— falling back to JSON');
     _migrateFromJson();
   }
+  // Restore winning patterns from DB if the local file is missing (e.g. after redeploy)
+  await _restorePatternsFromDb();
   _ready = true;
 }
 
@@ -114,6 +116,47 @@ function _dbUpdateBookingForContact(contactId) {
   ).catch(err => console.error('[Brain] DB booking update error:', err.message));
 }
 
+function _dbSavePatterns(patterns) {
+  pool.query(
+    `INSERT INTO winning_patterns (key, data, updated_at)
+     VALUES ('main', $1, $2)
+     ON CONFLICT (key) DO UPDATE SET data = $1, updated_at = $2`,
+    [JSON.stringify(patterns), Date.now()]
+  ).catch(err => console.error('[Brain] DB patterns save error:', err.message));
+}
+
+async function _restorePatternsFromDb() {
+  try {
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS winning_patterns (
+         key        TEXT    PRIMARY KEY,
+         data       TEXT    NOT NULL,
+         updated_at BIGINT  NOT NULL DEFAULT 0
+       )`
+    );
+    const { rows } = await pool.query(`SELECT data FROM winning_patterns WHERE key = 'main'`);
+    if (rows.length === 0) {
+      // DB is empty — seed from local file if it exists (first-time backup)
+      if (fs.existsSync(PATTERNS_FILE)) {
+        const fileData = fs.readFileSync(PATTERNS_FILE, 'utf8');
+        await pool.query(
+          `INSERT INTO winning_patterns (key, data, updated_at) VALUES ('main', $1, $2)
+           ON CONFLICT (key) DO NOTHING`,
+          [fileData, Date.now()]
+        );
+        console.log('[Brain] Winning patterns backed up to DB');
+      }
+    } else if (!fs.existsSync(PATTERNS_FILE)) {
+      // File is missing (e.g. after redeploy) — restore from DB
+      ensureDir();
+      fs.writeFileSync(PATTERNS_FILE, rows[0].data);
+      console.log('[Brain] Winning patterns restored from DB');
+    }
+  } catch (err) {
+    console.error('[Brain] DB patterns restore error:', err.message);
+  }
+}
+
 // Lazy-init Anthropic (avoids issues if env isn't loaded yet)
 let _ai = null;
 function getAI() {
@@ -170,6 +213,7 @@ function savePatterns(patterns) {
   } catch (err) {
     console.error('[Brain] Write error (patterns):', err.message);
   }
+  _dbSavePatterns(patterns);
 }
 
 // ─── Message ID ───────────────────────────────────────────────────────────────
