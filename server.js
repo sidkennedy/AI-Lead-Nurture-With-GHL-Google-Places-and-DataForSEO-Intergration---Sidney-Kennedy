@@ -592,8 +592,15 @@ app.post('/webhooks/ghl/enrolled', async (req, res) => {
     payload.email ||
     '';
 
-  const rawTags = payload.contact?.tags || payload.tags || [];
-  const tags = rawTags.map(t =>
+  // GHL sometimes sends tags as an array, sometimes as a comma-separated
+  // string, sometimes omits the field entirely. Normalise to a string[].
+  const rawTags = payload.contact?.tags ?? payload.tags ?? [];
+  const tagList = Array.isArray(rawTags)
+    ? rawTags
+    : (typeof rawTags === 'string'
+        ? rawTags.split(',').map(s => s.trim()).filter(Boolean)
+        : []);
+  const tags = tagList.map(t =>
     (typeof t === 'string' ? t : (t.name || '')).toLowerCase()
   );
 
