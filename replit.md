@@ -73,6 +73,22 @@ Markers in use:
 - `followup-hook-pos1` — the AI opener (Hook 1). Set by `generateAndSendOpener` in server.js. Used to dedup the opener itself and as the "opener already sent" guard for the enrolled webhook.
 - `silence-nudge` — the 5-min static "Hey <name>, you there?" nudge sent by `sendHook1Static` in followups.js when the prospect goes silent after the opener. Used by `processSilenceCheck` to dedup the nudge so it never fires twice. The nudge does **not** call `scheduleNext` — Hook 2 is already queued by the opener.
 
+## Booking Flow
+
+Three signals can flip a contact's local "stop talking to them" flag — but only confirmed-calendar signals count for dashboard stats.
+
+| Path | Trigger | `contacts.booked` | `brain_messages.booked` (dashboard stat) |
+|------|---------|:-----------------:|:----------------------------------------:|
+| 1. GHL appointment webhook (`/webhooks/ghl/appointment`) | Calendar appointment created in GHL | ✅ | ✅ |
+| 2. AI `[BOOKED]` marker in reply | The AI thinks the prospect agreed to a time | ✅ | ❌ (just pauses the AI) |
+| 3. Admin manual backfill | User clicks "mark as booked" | ✅ | ✅ |
+
+**Why split:** Path 2 is the AI's optimistic interpretation — counting it as a real booking inflates the booking-rate stat with prospects who never actually showed up on the calendar. So Path 2 only pauses the AI; it doesn't get recorded in `brain_messages.booked`.
+
+**Source of truth for stats:** All dashboard booking metrics MUST read from `brain_messages.booked` (via `brain.getStats()` for totals or `brain.getBookedContactIds()` for per-variant counting), NEVER from `contacts.booked`. The variant performance endpoint at `/api/brain/variants` was the last reader of `contacts.booked` for stat purposes — it now uses `brain.getBookedContactIds()`.
+
+**Idempotency:** All three paths early-exit if the contact is already `booked`, so paths firing in any order (or all three for the same contact) won't double-count.
+
 ## Lead Form Segmentation
 Contacts are bucketed by their Facebook lead form via the GHL tag `ampifyform:<slug>` (e.g. `ampifyform:high-volume`, `ampifyform:high-intent`, `ampifyform:high-intent-2FA`). The slug is lowercased and stored on `contacts.lead_form`; missing tags default to `unknown`. The value is re-derived on every `ContactUpdate` webhook and snapshotted onto each outbound `brain_messages.lead_form` so historical analytics stay accurate even if tags change. The admin dashboard's Performance panel and Prompt Editor both surface per-form breakdowns and let you filter A/B/C/D variant performance by lead form. Measurement only — script selection is unaffected.
 

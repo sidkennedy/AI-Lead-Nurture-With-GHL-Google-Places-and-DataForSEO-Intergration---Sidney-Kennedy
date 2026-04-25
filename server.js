@@ -1143,17 +1143,17 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
     }
   }
 
-  // [BOOKED] — contact has agreed to a time; stop AI responding and record
-  // the booking against the learning brain. Previously this only flipped
-  // contacts.booked locally and waited for the GHL appointment webhook to
-  // record the brain stat — but the webhook isn't always reached, leaving
-  // the dashboard's booking-rate stat showing 0%. The appointment webhook
-  // (when it does fire) no-ops here since the contact is already booked.
+  // [BOOKED] — the AI thinks the prospect agreed to a time. This ONLY pauses
+  // the AI (so it stops responding and follow-ups stop firing). It does NOT
+  // count as a real booking on the dashboard — that requires a confirmed
+  // GHL calendar appointment (see /webhooks/ghl/appointment), which calls
+  // brain.recordBooking() to mark the booking in the stats. This split lets
+  // the dashboard's booking-rate stat reflect only confirmed calendar
+  // bookings, not the AI's optimistic interpretation of the conversation.
   if (reply.includes('[BOOKED]')) {
     reply = reply.replace(/\[BOOKED\]\s*/gi, '').trim();
     conversations.update(contactId, { booked: true });
-    brain.recordBooking(contactId);
-    console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused, booking recorded`);
+    console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused, awaiting GHL appointment confirmation`);
   }
 
   // Update step
@@ -2104,6 +2104,11 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
     // render filter chips dynamically (no hard-coded form list).
     const leadFormSet = new Set();
 
+    // Real-bookings source-of-truth — only contacts confirmed by the GHL
+    // appointment webhook (or the manual admin backfill) appear here. The
+    // AI's [BOOKED] marker pauses the AI but does NOT count for stats.
+    const bookedSet = brain.getBookedContactIds();
+
     for (const c of Object.values(allContacts)) {
       const cForm = c.leadForm || 'unknown';
       leadFormSet.add(cForm);
@@ -2114,7 +2119,7 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
       const inbound = (c.exchanges || []).filter(e => e.direction === 'inbound').length;
       if (inbound >= 1) vc.repliedOnce++;
       if (inbound >= 4) vc.replied4++;
-      if (c.booked) vc.booked++;
+      if (bookedSet.has(c.contactId)) vc.booked++;
     }
 
     const pct = (n, d) => d > 0 ? Math.round((n / d) * 100) : null;

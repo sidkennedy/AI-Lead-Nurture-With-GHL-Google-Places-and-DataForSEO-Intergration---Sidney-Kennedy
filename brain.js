@@ -1076,6 +1076,19 @@ function startScheduledAnalysis() {
 // Kick off DB load immediately — store the promise so callers can await readiness
 const _initPromise = initFromDb();
 
+// Returns the set of contactIds that have at least one outbound brain_messages
+// row marked booked. brain_messages.booked is only flipped by recordBooking(),
+// which is called from confirmed booking sources (the GHL appointment webhook
+// and the manual admin backfill) — NOT from the AI's [BOOKED] marker. So this
+// is the source-of-truth set of "real" bookings for any dashboard stat.
+function getBookedContactIds() {
+  const ids = new Set();
+  for (const m of _messagesCache) {
+    if (m.direction === 'outbound' && m.booked) ids.add(m.contactId);
+  }
+  return ids;
+}
+
 module.exports = {
   classifyStage,
   recordInbound,
@@ -1088,6 +1101,7 @@ module.exports = {
   buildWinningPatternsPrompt,
   getStats,
   getVariantStats,
+  getBookedContactIds,
   startScheduledAnalysis,
   initFromDb,
   whenReady: () => _initPromise
