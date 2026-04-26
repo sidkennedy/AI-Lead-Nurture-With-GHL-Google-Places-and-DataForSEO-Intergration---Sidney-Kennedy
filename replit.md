@@ -8,6 +8,20 @@ Admin dashboard lives at `/admin?key=YOUR_ADMIN_KEY`.
 
 ---
 
+## ⚠️ AGENT: HOW TO MAINTAIN THIS FILE ⚠️
+
+This file is loaded into memory at the start of every conversation. It is the primary mechanism for not repeating mistakes. Follow these rules without being prompted:
+
+1. **After fixing any bug that was not immediately obvious — document it here before closing the task.** Not after the second occurrence. The first. If you had to investigate, test, or iterate more than once to find the cause, it belongs here.
+
+2. **Write the trap entry at the pattern level, not the symptom level.** "Admin dashboard showed Loading forever" is a symptom. "Writing `\'` inside a single-quoted string inside an outer backtick template silently drops the backslash, breaking the entire script" is the trap. Future you needs the root cause, not the surface behavior.
+
+3. **Include the fix pattern alongside the trap.** State what broke, why it broke, and the exact pattern that prevents recurrence. A trap entry without a fix is incomplete.
+
+4. **Do not wait for the user to ask.** The user should never have to say "update the replit.md" — that means the trap was left undocumented. If you find yourself thinking "I should probably document this later", do it now.
+
+---
+
 ## ⚠️ AGENT: ALWAYS USE PROD_DATABASE_URL FOR ONE-OFF SCRIPTS ⚠️
 
 **The trap:** This Replit workspace ships with its own empty Postgres at `DATABASE_URL` (host `helium`). The real data lives in Neon at `PROD_DATABASE_URL`. The running server flips `process.env.DATABASE_URL = process.env.PROD_DATABASE_URL` inside `server.js` (lines 17–22), so the app is always on prod. **But that flip never runs in a fresh shell process** — so any standalone `node -e "..."` or `node scripts/foo.js` invocation that uses `DATABASE_URL` will silently hit the empty local DB and return wrong/stale results.
