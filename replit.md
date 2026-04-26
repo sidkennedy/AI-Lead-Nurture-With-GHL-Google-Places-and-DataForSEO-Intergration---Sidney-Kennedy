@@ -46,16 +46,30 @@ The entire admin UI HTML+CSS+JS is rendered by huge backtick template literals i
 
 When editing anything inside the admin template, scan your changes for contractions before saving.
 
+**Same trap, different shape — nested backtick template literals inside the page template:** Any JavaScript function added to the admin `<script>` block lives inside the outer backtick template literal that builds the whole page. If that function uses its own backtick template literal (e.g. `` return `<div>...</div>`; ``), it terminates the outer template early, causing a Node.js `SyntaxError: Unexpected identifier 'style'` (or similar) that crashes the server on boot. This happened three times during the Saved Issues feature build (Apr 26). **Hard rule:** all JS helper functions added inside the admin `<script>` block must use plain string concatenation (`'<div>' + x + '</div>'`) — never backtick template literals. The outer page template can use `${}` interpolation freely, but inner JS function bodies cannot.
+
 **Same trap, different shape — `JSON.stringify` interpolated into an HTML attribute:** `JSON.stringify(x)` always wraps strings in double quotes. Embedding that inside `onclick="..."` (or any `attr="..."`) collides with the attribute delimiter and silently truncates the JS — clicking the element then throws `SyntaxError: Unexpected end of input`. The unknown-lead-form-button crash on 2026-04-26 (server.js lines 4168 and 4636) was exactly this: `onclick="setVariantLeadFormFilter(${JSON.stringify(f)})"` rendered as `onclick="setVariantLeadFormFilter("unknown")"`. Fix pattern used: `${JSON.stringify(x).replace(/"/g, '&quot;')}` — the browser HTML-decodes `&quot;` back to `"` when invoking the handler. (Switching the attribute to single quotes also works as long as the string can't contain a single quote.)
 
-### 3. The user republishes manually — file/code changes are NOT live in prod until they confirm
+### 3. Admin dashboard "Loading forever" after a fresh publish — always use fetchWithTimeout
+Every data-loading function in the admin dashboard (`loadBrain`, `loadFollowups`, `loadSpend`, `loadIssues`) wraps its fetch calls in `fetchWithTimeout(url, opts, ms)` (defined near the top of the admin `<script>` block). Without a timeout, if the production server is still cold-starting when the admin page first loads, fetch calls hang indefinitely and spinners never clear. The wrapper uses `AbortController` and defaults to 15 seconds; on abort it throws `"Request timed out — server may still be starting. Refresh to retry."` which the catch blocks surface in the UI. **Any new `fetch(...)` call added to a load function must use `fetchWithTimeout(...)` instead.** This recurred twice before the fix was in place (Apr 26).
+
+### 4. The user republishes manually — file/code changes are NOT live in prod until they confirm
 Two things to keep straight when reporting status to the user:
 - **DB writes** (anything written to the prod Neon database via `PROD_DATABASE_URL`) — these are live in prod **immediately**. Admin UI shows them on next refresh.
 - **File/code changes** (edits to `.js`, `.json`, `.md`, etc. in this workspace) — these only ship to prod when the user clicks Publish. Until then, prod runs the previously-deployed code.
 
 When telling the user something is "done" or "live", be explicit about which: "the DB is updated now; the file change ships on your next deploy" — never just "this is live now". This prevents the user from thinking a code-path change has reached prod when it hasn't.
 
-### 4. Source of truth for prompt content is the prod DB `ai_prompts` table — not the file
+### 5. GHL webhook misses — AI goes silent after a prospect reply
+GHL occasionally fails to deliver the inbound webhook to the server, even when the prospect's reply is visible in the GHL UI. The symptom: the prospect sent a message (e.g. "Go"), you can see it in GHL, but the DB has no inbound exchange record for that contact and the AI never responded. Confirmed cases: Yung Tommy Walker (Apr 26 08:01 "I'm sorry"), Lester Herbertson (Apr 26 09:21 "Go").
+
+**Immediate fix:** Admin dashboard → "Missed Reply Trigger" section → search the contact name → type exactly what they sent → hit Trigger AI Response. The AI responds immediately. Before triggering, check whether the conversation has moved on manually — if a human has already taken over and sent subsequent messages, do NOT trigger (it would send an out-of-context AI reply).
+
+**Root cause:** GHL webhook delivery is best-effort; the server has no polling/replay mechanism. Long-term fix (not yet built): a reconciliation job that periodically pulls recent GHL messages and backfills any inbound the server missed — medium complexity, ~1-2 hours. This is documented in the Saved Issues panel on the admin dashboard.
+
+**Saved Issues panel:** Added Apr 26. Lives at the bottom of the admin dashboard. Stores bugs/patterns you want to revisit later without fixing immediately — title, problem description, solution/next-step notes, optional contact reference, open/done status. The GHL webhook-miss issue is pre-seeded there. Use it whenever something weird happens and you are not ready to fix it yet — saves re-investigation cost next time.
+
+### 6. Source of truth for prompt content is the prod DB `ai_prompts` table — not the file
 `data/prompts.json` is a mirror, not a source. The boot logic in `prompts.js` (`syncFromDb`) is "DB wins": on every server start, the file gets overwritten with whatever is in `ai_prompts`. So:
 - **Read order:** trust the DB first. If the file disagrees with the DB, the DB is right.
 - **Write order:** when you change a prompt, write to BOTH places (file + DB) in the same operation. Use the canonical pool snippet from the wrong-DB section above against `PROD_DATABASE_URL`. The pattern `INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET value=$2, updated_at=$3` is what `prompts.js syncToDb` uses — copy it.
@@ -64,10 +78,10 @@ When telling the user something is "done" or "live", be explicit about which: "t
 
 The admin UI's "Save" button on the Prompt Editor already does both correctly (`POST /admin/prompts/:name` writes to file AND calls `syncToDb`). Match that pattern in any one-off script.
 
-### 5. When you renumber steps in a prompt variant, cross-references break silently
+### 7. When you renumber steps in a prompt variant, cross-references break silently
 The variant prompts are full of internal step references — RULES section ("EXCEPT the Step N bridge"), MAPS CONFIRMATION LOOP ("after the [PRACTICE_DETECTED] bridge in Step N"), EARLY BOOKING ("skip directly to Step N"), LIVE DATA ("use the real numbers in Step N"), NEVER REPEAT A QUESTION (which questions belong to which step), and the [STEP:N] valid-range note in RULES ("integer 1-N"). When you change the numbering of any step, **every one** of those references must be updated in the same edit pass. The Apr 26 Variant B renumber (8 steps → 7) missed the RULES line "EXCEPT the Step 6 bridge" — that contradiction made the bridge non-deterministic until hotfixed. Audit checklist before saving a renumber: search the prompt text for every `Step \d` occurrence and reconcile each one against the new numbering, then re-confirm the [STEP:N] integer range cap matches the highest step number.
 
-### 6. All 4 variants now carry two non-negotiable safety blocks — preserve them on any future edit
+### 8. All 4 variants now carry two non-negotiable safety blocks — preserve them on any future edit
 Inserted Apr 26 right above the `━━━ AFTER A DECLINE` header in every variant (A/B/C/D):
 1. **`━━━ NEVER BOOK BEFORE QUALIFYING ━━━`** — gates `[BOOKED]` on BOTH `LIVE RESEARCH DATA` AND `SCAN RESULTS` being present in the system context. Provides the verbatim pivot string `"Love the energy [first name] — I just need to confirm one thing first so the call's actually useful for you."` for premature-book attempts. The pivot is written as an instruction (NOT a template with bracketed placeholders) so the model substitutes the first name and asks its current-step question without leaking any literal brackets into the SMS. Without this block, all 4 variants will fire `[BOOKED]` on a turn-1 "yes book me tomorrow at 10am" with no discovery, no research, no scan — confirmed via `/tmp/stress.js` before the patch.
 2. **`━━━ HOSTILE / AGGRESSIVE OPT-OUT — IMMEDIATE [DECLINED] ━━━`** — explicit phrase list (profanity at the bot incl. "fuck you" / "go fuck yourself", spam complaints, removal requests incl. "lose my number" / "stop contacting me", TCPA STOP/QUIT/END/CANCEL/OPTOUT/UNSUBSCRIBE matched as standalone tokens with an edge-case caveat against false-positives like "I tried to call but it stopped ringing") that force the "Not interested" handler regardless of `CURRENT STEP`. Without this, variant B in particular will try to win-back hostile openers ("One look and if it's not for you, I'm gone") instead of folding. A/C/D fold on the same input naturally because their voices are less aggressive — but the explicit rule belt-and-suspenders all four.
