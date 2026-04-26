@@ -8,18 +8,19 @@ try {
 } catch {}
 
 // ─── Production DB Override (Dev Mode Only) ───────────────────────────────────
-// When DEV_MODE=true AND PROD_DATABASE_URL is set, route ALL database connections
-// to production. This lets the local dev server read/write the same live database
-// the deployed app uses, so the admin UI always reflects real data. Must run
-// BEFORE any module that creates a Pool from process.env.DATABASE_URL is required.
-//
-// Hard-gated on DEV_MODE so that even if PROD_DATABASE_URL accidentally lands in
-// deployment secrets, production will NOT silently re-route its DB target.
-if (process.env.DEV_MODE === 'true' && process.env.PROD_DATABASE_URL && process.env.PROD_DATABASE_URL !== process.env.DATABASE_URL) {
+// PROD_DATABASE_URL is the Neon database — the real data store for BOTH the
+// local dev server and the deployed production server. The Replit-managed
+// DATABASE_URL points to an empty Replit-provisioned PostgreSQL that is not
+// used by this app. Whenever PROD_DATABASE_URL is set (which it always is,
+// in both environments), we route ALL database connections to it.
+// Must run BEFORE any module that creates a Pool from process.env.DATABASE_URL.
+if (process.env.PROD_DATABASE_URL && process.env.PROD_DATABASE_URL !== process.env.DATABASE_URL) {
   process.env.DATABASE_URL = process.env.PROD_DATABASE_URL;
-  console.log('[DB] DEV_MODE — DATABASE_URL routed to PROD_DATABASE_URL (local server now uses the LIVE production database)');
-} else if (process.env.PROD_DATABASE_URL && process.env.DEV_MODE !== 'true') {
-  console.warn('[DB] PROD_DATABASE_URL is set but DEV_MODE is not "true" — ignoring override (production should never use PROD_DATABASE_URL).');
+  if (process.env.DEV_MODE === 'true') {
+    console.log('[DB] DEV_MODE — DATABASE_URL routed to PROD_DATABASE_URL (local server uses the live production database)');
+  } else {
+    console.log('[DB] DATABASE_URL routed to PROD_DATABASE_URL (production server uses Neon database)');
+  }
 }
 
 const express = require('express');
