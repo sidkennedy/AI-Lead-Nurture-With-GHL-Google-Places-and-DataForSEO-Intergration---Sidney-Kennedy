@@ -1829,13 +1829,25 @@ app.post('/api/contacts/:contactId/reset-spend', requireAdmin, (req, res) => {
 
 app.get('/api/brain/stats', requireAdmin, async (req, res) => {
   const days = parseInt(req.query.days, 10) || null;
+  const leadFormFilter = (req.query.leadForm || '').toString().trim().toLowerCase() || null;
   const allContacts = conversations.getAll();
+  const allContactValues = Object.values(allContacts);
 
+  // Collect all distinct named lead forms (before any filter) for the pill list
+  const leadFormSet = new Set(allContactValues.map(c => c.leadForm || 'unknown'));
+  const leadForms = Array.from(leadFormSet).filter(f => f !== 'unknown').sort();
+
+  // Build filtered contact set — day and lead-form filters compose
+  const cutoff = days ? Date.now() - days * 86400000 : null;
   let enrolledIds = null;
   let enrolledTotal;
-  if (days) {
-    const cutoff = Date.now() - days * 86400000;
-    const filtered = Object.values(allContacts).filter(c => (c.createdAt || 0) >= cutoff);
+
+  if (cutoff || leadFormFilter) {
+    const filtered = allContactValues.filter(c => {
+      if (cutoff && (c.createdAt || 0) < cutoff) return false;
+      if (leadFormFilter && (c.leadForm || 'unknown') !== leadFormFilter) return false;
+      return true;
+    });
     enrolledIds = new Set(filtered.map(c => c.contactId));
     enrolledTotal = enrolledIds.size;
   } else {
@@ -1844,34 +1856,37 @@ app.get('/api/brain/stats', requireAdmin, async (req, res) => {
 
   const stats = brain.getStats(enrolledIds);
 
-  // Fetch week-over-week snapshot delta (most recent vs ~7 days ago)
+  // Fetch week-over-week snapshot delta (most recent vs ~7 days ago).
+  // Only meaningful on the global unfiltered view.
   let snapshotDelta = null;
-  try {
-    const snapResult = await _promptsPool.query(
-      `SELECT * FROM funnel_snapshots ORDER BY taken_at DESC LIMIT 1`
-    );
-    const weekAgoResult = await _promptsPool.query(
-      `SELECT * FROM funnel_snapshots WHERE taken_at <= NOW() - INTERVAL '6 days' ORDER BY taken_at DESC LIMIT 1`
-    );
-    if (snapResult.rows.length && weekAgoResult.rows.length) {
-      const cur = snapResult.rows[0];
-      const old = weekAgoResult.rows[0];
-      snapshotDelta = {
-        leads:       (cur.total_leads        - old.total_leads),
-        repliedOnce: (parseFloat(cur.replied_once_pct)  - parseFloat(old.replied_once_pct)),
-        replied4:    (parseFloat(cur.replied_4plus_pct) - parseFloat(old.replied_4plus_pct)),
-        bookingRate: (parseFloat(cur.booking_rate_pct)  - parseFloat(old.booking_rate_pct)),
-        comparedAt:  old.taken_at
-      };
-    }
-  } catch (err) {
-    // Silently skip only when the table does not exist yet (first boot before migration)
-    if (!err.message.includes('funnel_snapshots')) {
-      console.error('[Stats] Snapshot delta query error:', err.message);
+  if (!leadFormFilter) {
+    try {
+      const snapResult = await _promptsPool.query(
+        `SELECT * FROM funnel_snapshots ORDER BY taken_at DESC LIMIT 1`
+      );
+      const weekAgoResult = await _promptsPool.query(
+        `SELECT * FROM funnel_snapshots WHERE taken_at <= NOW() - INTERVAL '6 days' ORDER BY taken_at DESC LIMIT 1`
+      );
+      if (snapResult.rows.length && weekAgoResult.rows.length) {
+        const cur = snapResult.rows[0];
+        const old = weekAgoResult.rows[0];
+        snapshotDelta = {
+          leads:       (cur.total_leads        - old.total_leads),
+          repliedOnce: (parseFloat(cur.replied_once_pct)  - parseFloat(old.replied_once_pct)),
+          replied4:    (parseFloat(cur.replied_4plus_pct) - parseFloat(old.replied_4plus_pct)),
+          bookingRate: (parseFloat(cur.booking_rate_pct)  - parseFloat(old.booking_rate_pct)),
+          comparedAt:  old.taken_at
+        };
+      }
+    } catch (err) {
+      // Silently skip only when the table does not exist yet (first boot before migration)
+      if (!err.message.includes('funnel_snapshots')) {
+        console.error('[Stats] Snapshot delta query error:', err.message);
+      }
     }
   }
 
-  res.json({ ...stats, enrolledTotal, snapshotDelta });
+  res.json({ ...stats, enrolledTotal, snapshotDelta, leadForms });
 });
 
 app.post('/api/brain/analyze', requireAdmin, async (req, res) => {
@@ -3734,11 +3749,14 @@ ${DEV_MODE ? `<div style="position:fixed;top:0;left:0;right:0;z-index:9999;backg
 <!-- ── Funnel Header ── -->
 <div class="funnel-header">
   <span class="funnel-label">Funnel</span>
-  <div class="filter-pills">
-    <button class="filter-pill active" onclick="setDaysFilter(null,this)">All time</button>
-    <button class="filter-pill" onclick="setDaysFilter(30,this)">30d</button>
-    <button class="filter-pill" onclick="setDaysFilter(7,this)">7d</button>
-    <button class="filter-pill" onclick="setDaysFilter(3,this)">3d</button>
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+    <div class="filter-pills" id="days-filter-pills">
+      <button class="filter-pill active" onclick="setDaysFilter(null,this)">All time</button>
+      <button class="filter-pill" onclick="setDaysFilter(30,this)">30d</button>
+      <button class="filter-pill" onclick="setDaysFilter(7,this)">7d</button>
+      <button class="filter-pill" onclick="setDaysFilter(3,this)">3d</button>
+    </div>
+    <div id="lead-form-pills" class="filter-pills" style="display:none;border-left:1px solid rgba(203,213,225,.9);padding-left:10px;margin-left:2px"></div>
   </div>
 </div>
 
@@ -3877,12 +3895,25 @@ let currentTab = 'pending';
 let allJobs = [];
 let contactMap = {};
 let currentDays = null;
+let currentLeadForm = null;
 let savedIssues = [];
 
 function setDaysFilter(days, btn) {
   currentDays = days;
-  document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#days-filter-pills .filter-pill').forEach(el => el.classList.remove('active'));
   btn.classList.add('active');
+  loadBrain();
+}
+
+function setLeadFormFilter(form) {
+  currentLeadForm = form || null;
+  const container = document.getElementById('lead-form-pills');
+  if (container) {
+    container.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
+    Array.from(container.querySelectorAll('.filter-pill')).forEach(b => {
+      if ((b.dataset.form || '') === (form || '')) b.classList.add('active');
+    });
+  }
   loadBrain();
 }
 
@@ -4468,7 +4499,12 @@ async function loadFollowups() {
 async function loadBrain() {
   const el = document.getElementById('brain-content');
   try {
-    const statsUrl = '/api/brain/stats' + (currentDays ? '?days=' + currentDays : '');
+    // Build stats URL — day and lead-form filters compose
+    const statsParams = [];
+    if (currentDays) statsParams.push('days=' + currentDays);
+    if (currentLeadForm) statsParams.push('leadForm=' + encodeURIComponent(currentLeadForm));
+    const statsUrl = '/api/brain/stats' + (statsParams.length ? '?' + statsParams.join('&') : '');
+
     const res = await fetchWithTimeout(statsUrl, { headers: { 'x-admin-key': ADMIN_KEY } });
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
@@ -4481,7 +4517,28 @@ async function loadBrain() {
     document.getElementById('s-replied-4').textContent    = pct(t.contactsReplied4Plus);
     document.getElementById('s-booked-rate').textContent  = pct(t.booked);
 
-    // Week-over-week delta badges
+    // Populate lead-form pills in the funnel header from API response.
+    // Pills are always rebuilt so the list stays in sync with live GHL tags.
+    const pillContainer = document.getElementById('lead-form-pills');
+    if (pillContainer) {
+      const forms = data.leadForms || [];
+      if (forms.length >= 1) {
+        pillContainer.innerHTML = ['', ...forms].map(f => {
+          const label = f === '' ? 'All forms' : f;
+          const isActive = (!f && !currentLeadForm) || (f && f === currentLeadForm);
+          const cls = isActive ? 'filter-pill active' : 'filter-pill';
+          return \`<button class="\${cls}" data-form="\${escHtml(f)}" onclick="setLeadFormFilter(\${JSON.stringify(f).replace(/"/g, '&quot;')})">\${escHtml(label)}</button>\`;
+        }).join('');
+        pillContainer.style.display = '';
+      } else {
+        pillContainer.innerHTML = '';
+        pillContainer.style.display = 'none';
+        currentLeadForm = null;
+      }
+    }
+
+    // Week-over-week delta badges — suppressed when any filter is active
+    // (snapshot data is global so the delta would be misleading on a filtered view).
     function applyDelta(elId, diff, isCount) {
       const el = document.getElementById(elId);
       if (!el) return;
@@ -4491,9 +4548,7 @@ async function loadBrain() {
       el.textContent = label;
       el.className = 'delta ' + (diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat');
     }
-    // Only show deltas on the "all time" view — snapshot data is global so the
-    // delta would be misleading when a date filter is active.
-    const sd = (!currentDays && data.snapshotDelta) ? data.snapshotDelta : null;
+    const sd = (!currentDays && !currentLeadForm && data.snapshotDelta) ? data.snapshotDelta : null;
     ['d-leads','d-replied-once','d-replied-4','d-booked-rate'].forEach(id => {
       const el = document.getElementById(id);
       if (el && !sd) { el.textContent = ''; el.className = 'delta flat'; }
@@ -4526,9 +4581,11 @@ async function loadBrain() {
     // Each row is a Facebook lead form bucket (derived from the
     // \`ampifyform:<slug>\` GHL tag at enrollment / tag update). A new tag
     // automatically becomes a new row — no code change needed.
+    // When a form filter is active this table is suppressed (you're already
+    // looking at one form, so the cross-form comparison isn't meaningful).
     const leadFormEntries = Object.entries(data.byLeadForm || {})
       .sort((a, b) => (b[1].leads || 0) - (a[1].leads || 0));
-    const leadFormHtml = leadFormEntries.length > 0 ? \`
+    const leadFormHtml = (!currentLeadForm && leadFormEntries.length > 0) ? \`
       <div style="margin-top:28px;border-top:1px solid rgba(203,213,225,.6);padding-top:20px">
         <div style="font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Lead Form Performance</div>
         <div style="font-size:12px;color:#64748b;margin-bottom:12px;line-height:1.6">
@@ -4536,7 +4593,7 @@ async function loadBrain() {
           <code style="background:#f1f5f9;padding:1px 6px;border-radius:6px;font-size:11px">ampifyform:&lt;slug&gt;</code>
           (e.g. <code style="background:#f1f5f9;padding:1px 6px;border-radius:6px;font-size:11px">ampifyform:high-volume</code>,
           <code style="background:#f1f5f9;padding:1px 6px;border-radius:6px;font-size:11px">ampifyform:high-intent</code>,
-          <code style="background:#f1f5f9;padding:1px 6px;border-radius:6px;font-size:11px">ampifyform:high-intent-2FA</code>) — new buckets appear here automatically.
+          <code style="background:#f1f5f9;padding:1px 6px;border-radius:6px;font-size:11px">ampifyform:high-intent-2FA</code>) &mdash; new buckets appear here automatically.
         </div>
         <div class="table-wrap"><table class="perf-table">
           <thead><tr>
@@ -4560,14 +4617,12 @@ async function loadBrain() {
         </table></div>
       </div>\` : '';
 
-    // ── Variant Performance (with optional Lead Form filter) ────────────────
-    // Active filter survives across the 30-second refresh cycle by being stored
-    // on the panel container as a data attribute.
-    const wrapEl = document.getElementById('brain-content');
-    const activeForm = wrapEl?.dataset.leadFormFilter || '';
+    // ── Variant Performance ──────────────────────────────────────────────────
+    // Lead form filter is driven by the global currentLeadForm (set at the top
+    // of the page). No per-panel chips needed here any more.
     let variantRows = '';
     try {
-      const vUrl = '/api/brain/variants' + (activeForm ? ('?leadForm=' + encodeURIComponent(activeForm)) : '');
+      const vUrl = '/api/brain/variants' + (currentLeadForm ? ('?leadForm=' + encodeURIComponent(currentLeadForm)) : '');
       const vRes = await fetch(vUrl, { headers: { 'x-admin-key': ADMIN_KEY } });
       if (vRes.ok) {
         const vData = await vRes.json();
@@ -4578,12 +4633,6 @@ async function loadBrain() {
             return \`<span style="font-weight:600;color:\${col}">\${r}%</span>\`;
           }
           const variantColors = { A: '#748ffc', B: '#f59e0b', C: '#34d399' };
-          const formChips = ['', ...(vData.leadForms || [])].map(f => {
-            const label = f === '' ? 'All forms' : f;
-            const isActive = (f === '' && !activeForm) || (f !== '' && f === activeForm);
-            const cls = isActive ? 'filter-pill active' : 'filter-pill';
-            return \`<button class="\${cls}" onclick="setVariantLeadFormFilter(\${JSON.stringify(f).replace(/"/g, '&quot;')})">\${escHtml(label)}</button>\`;
-          }).join('');
           function vPBestPill(p) {
             if (p === null || p === undefined) return '<span style="color:#94a3b8;font-size:12px">—</span>';
             const bg   = p >= 85 ? '#dcfce7' : p >= 70 ? '#fef3c7' : '#f1f5f9';
@@ -4595,7 +4644,6 @@ async function loadBrain() {
             <div style="margin-top:28px;border-top:1px solid rgba(203,213,225,.6);padding-top:20px">
               <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
                 <div style="font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.1em">A/B/C/D Script Variant Performance</div>
-                <div class="filter-pills">\${formChips}</div>
               </div>
               <div class="table-wrap"><table class="perf-table">
                 <thead><tr>
@@ -4618,10 +4666,10 @@ async function loadBrain() {
               <div style="margin-top:12px;padding:10px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;font-size:11px;color:#475569;line-height:1.6">
                 <strong style="color:#0f172a">P(Best)</strong> = probability this variant has the highest <em>true</em> booking rate across 50,000 simulated outcomes.
                 <span style="margin-left:6px;padding:1px 7px;border-radius:999px;background:#dcfce7;color:#16a34a;border:1px solid #86efac;font-weight:700">85%+</span> Strong signal.
-                <span style="margin-left:4px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;font-weight:700">70–84%</span> Keep testing.
+                <span style="margin-left:4px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;font-weight:700">70&ndash;84%</span> Keep testing.
                 <span style="margin-left:4px;padding:1px 7px;border-radius:999px;background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;font-weight:700">&lt;70%</span> Too early to call.
                 &nbsp;&nbsp;<span style="color:#94a3b8">— = fewer than 3 contacts.</span>
-                &nbsp;&nbsp;\${activeForm ? 'Lead form: <strong>' + escHtml(activeForm) + '</strong>.' : ''} Edit scripts at <a href="/admin/prompts?key=\${ADMIN_KEY}" style="color:#0ea56f">Prompt Editor</a>.
+                &nbsp;&nbsp;\${currentLeadForm ? 'Filtered to lead form: <strong>' + escHtml(currentLeadForm) + '</strong>.' : ''} Edit scripts at <a href="/admin/prompts?key=\${ADMIN_KEY}" style="color:#0ea56f">Prompt Editor</a>.
               </div>
             </div>\`;
         }
@@ -4636,16 +4684,6 @@ async function loadBrain() {
   } catch (err) {
     el.innerHTML = '<div class="empty">Failed to load: ' + escHtml(err.message) + '</div>';
   }
-}
-
-// Persist the chosen Lead Form filter on the brain-content container so it
-// survives the 30-second auto-refresh. Calling loadBrain() repaints the panel
-// using the new filter without disturbing other panels on the page.
-function setVariantLeadFormFilter(form) {
-  const wrap = document.getElementById('brain-content');
-  if (!wrap) return;
-  wrap.dataset.leadFormFilter = form || '';
-  loadBrain();
 }
 
 async function loadSpend() {
