@@ -3829,22 +3829,22 @@ function issueCard(i) {
     ? '<span class="badge b-booked">Done</span>'
     : '<span class="badge b-pending">Open</span>';
   const contact = i.contactId ? ' • ' + escHtml(i.contactId) : '';
-  const solution = i.solution ? `<div style="margin-top:8px;font-size:13px;color:#475569;line-height:1.6"><strong>Solution:</strong> ${escHtml(i.solution)}</div>` : '';
-  return '<div style="border:1px solid rgba(203,213,225,.7);border-radius:16px;padding:14px;margin-bottom:10px;background:#fff">' +
-    '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">' +
-      '<div>' +
-        '<div style="font-weight:800;color:#0f172a">' + escHtml(i.title || 'Untitled') + '</div>' +
-        '<div style="font-size:12px;color:#64748b;margin-top:4px">' + badge + '<span style="margin-left:8px">Saved ' + fmtIssueTime(i.createdAt) + '</span>' + contact + '</div>' +
-      '</div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-        '<button class="action-btn" onclick="editIssue(' + JSON.stringify(i.id) + ')">Edit</button>' +
-        '<button class="action-btn action-btn-info" onclick="toggleIssueStatus(' + JSON.stringify(i.id) + ')">' + (i.status === 'done' ? 'Reopen' : 'Done') + '</button>' +
-        '<button class="action-btn action-btn-warn" onclick="deleteIssue(' + JSON.stringify(i.id) + ')">Delete</button>' +
-      '</div>' +
-    '</div>' +
-    '<div style="margin-top:10px;font-size:13px;color:#475569;line-height:1.6"><strong>Problem:</strong> ' + escHtml(i.issue || '') + '</div>' +
-    solution +
-  '</div>';
+  const solution = i.solution ? '<div style="margin-top:8px;font-size:13px;color:#475569;line-height:1.6"><strong>Solution:</strong> ' + escHtml(i.solution) + '</div>' : '';
+  return `<div style="border:1px solid rgba(203,213,225,.7);border-radius:16px;padding:14px;margin-bottom:10px;background:#fff">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">
+      <div>
+        <div style="font-weight:800;color:#0f172a">${escHtml(i.title || 'Untitled')}</div>
+        <div style="font-size:12px;color:#64748b;margin-top:4px">${badge}<span style="margin-left:8px">Saved ${fmtIssueTime(i.createdAt)}</span>${contact}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="action-btn" onclick="editIssue(${JSON.stringify(i.id)})">Edit</button>
+        <button class="action-btn action-btn-info" onclick="toggleIssueStatus(${JSON.stringify(i.id)})">${i.status === 'done' ? 'Reopen' : 'Done'}</button>
+        <button class="action-btn action-btn-warn" onclick="deleteIssue(${JSON.stringify(i.id)})">Delete</button>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:13px;color:#475569;line-height:1.6"><strong>Problem:</strong> ${escHtml(i.issue || '')}</div>
+    ${solution}
+  </div>`;
 }
 
 async function loadIssues() {
