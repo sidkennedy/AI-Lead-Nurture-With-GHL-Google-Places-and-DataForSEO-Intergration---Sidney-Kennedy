@@ -1890,6 +1890,35 @@ app.post('/api/admin/replay-inbound', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Admin: Contacts awaiting booking confirmation ────────────────────────────
+// Returns contacts the AI paused ([BOOKED] marker) but that have NOT yet been
+// confirmed as a real booking (no brain_messages.booked record). These are the
+// prospects who verbally agreed in chat but may not have hit the calendar yet.
+app.get('/api/admin/awaiting-confirmation', requireAdmin, (req, res) => {
+  const bookedSet = brain.getBookedContactIds();
+  const all = conversations.getAll();
+  const awaiting = Object.values(all)
+    .filter(c => c.booked && !bookedSet.has(c.contactId))
+    .map(c => ({ contactId: c.contactId, firstName: c.firstName || '—', city: c.city || '' }));
+  res.json({ ok: true, awaiting });
+});
+
+// ─── Admin: Manually confirm a booking ───────────────────────────────────────
+// Marks a contact as a REAL booking in the brain stats (counts on dashboard).
+// Only valid if the contact is already in the AI-paused state (contacts.booked).
+app.post('/api/admin/confirm-booking', requireAdmin, async (req, res) => {
+  const { contactId } = req.body || {};
+  if (!contactId) return res.status(400).json({ error: 'contactId is required' });
+  const contact = conversations.get(contactId);
+  if (!contact) return res.status(404).json({ error: 'Contact not found' });
+  if (!contact.booked) return res.status(400).json({ error: 'Contact is not in a booked/paused state' });
+  const alreadyConfirmed = brain.getBookedContactIds().has(contactId);
+  if (alreadyConfirmed) return res.json({ ok: true, alreadyConfirmed: true, firstName: contact.firstName });
+  await brain.recordBooking(contactId);
+  console.log(`[ConfirmBooking] Admin confirmed booking for ${contact.firstName} (${contactId})`);
+  res.json({ ok: true, firstName: contact.firstName });
+});
+
 app.post('/api/admin/backfill-bookings', requireAdmin, async (req, res) => {
   const CALENDAR_IDS = [
     'TEJPVxOMR0rrTwxgavfc','lLa9R176JhNHeXrmyhc4','xadAGwKudYEsVjbEYR0n',
@@ -3355,6 +3384,12 @@ ${DEV_MODE ? `<div style="position:fixed;top:0;left:0;right:0;z-index:9999;backg
   </div>
 
   <div class="subpanel-divider">
+    <div class="subpanel-title">Pending Booking Confirmations</div>
+    <div class="subpanel-desc">Contacts where the AI stopped messaging because it detected a verbal commitment, but no GHL calendar appointment has been confirmed yet. If the prospect did book, click <strong style="color:#0f172a;font-weight:700">Confirm</strong> to record them in your booking stats. If they didn't actually book, you can ignore them — the AI is already paused.</div>
+    <div id="awaiting-confirmation-list" style="margin-top:10px;font-size:13px;color:#94a3b8">Loading&hellip;</div>
+  </div>
+
+  <div class="subpanel-divider">
     <div class="subpanel-title">Enrollment Sync</div>
     <div class="subpanel-desc">Pulls everyone with a specific GHL tag and registers any who aren't in the system yet. Does <strong style="color:#0f172a;font-weight:700">not</strong> send any messages — GHL's automation handles the intro. When contacts reply, the AI takes over automatically. Enter the exact tag name from GHL.</div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
@@ -3645,10 +3680,61 @@ async function syncBookings(btn) {
       : already > 0
         ? 'All matched contacts already booked (' + already + ')'
         : 'No enrolled contacts found with GHL appointments';
-    if (n > 0) loadBrain();
+    if (n > 0) { loadBrain(); loadAwaitingConfirmation(); }
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
   } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadAwaitingConfirmation() {
+  const el = document.getElementById('awaiting-confirmation-list');
+  try {
+    const res = await fetch('/api/admin/awaiting-confirmation', { headers: { 'x-admin-key': ADMIN_KEY } });
+    const data = await res.json();
+    const list = data.awaiting || [];
+    if (list.length === 0) {
+      el.innerHTML = '<span style="color:#64748b">None — all AI-paused contacts are confirmed or the AI hasn\'t detected any verbal commitments yet.</span>';
+      return;
+    }
+    el.innerHTML = list.map(c => {
+      const name = escHtml(c.firstName || '—');
+      const loc  = escHtml(c.city || '');
+      return \`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(203,213,225,.2)">
+        <div style="flex:1">
+          <span style="font-weight:600;color:#e2e2e2">\${name}</span>
+          \${loc ? '<span style="color:#64748b;margin-left:6px">\${loc}</span>' : ''}
+        </div>
+        <button onclick="confirmBooking('\${escHtml(c.contactId)}',this)"
+          style="font-size:11px;font-weight:600;padding:4px 12px;border-radius:6px;border:1px solid #16a34a;background:#052e16;color:#4ade80;cursor:pointer">
+          Confirm Booking
+        </button>
+      </div>\`;
+    }).join('');
+  } catch (err) {
+    el.innerHTML = '<span style="color:#ef4444">Failed to load: ' + escHtml(err.message) + '</span>';
+  }
+}
+
+async function confirmBooking(contactId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/admin/confirm-booking', {
+      method: 'POST',
+      headers: { 'x-admin-key': ADMIN_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ contactId })
+    });
+    const data = await res.json();
+    if (!res.ok) { btn.textContent = data.error || 'Error'; btn.disabled = false; return; }
+    btn.textContent = data.alreadyConfirmed ? 'Already confirmed' : 'Confirmed!';
+    btn.style.borderColor = '#475569';
+    btn.style.color = '#94a3b8';
+    loadBrain();
+    setTimeout(() => loadAwaitingConfirmation(), 800);
+  } catch (err) {
+    btn.textContent = 'Error';
     btn.disabled = false;
   }
 }
@@ -4019,7 +4105,7 @@ async function resetSpend(contactId) {
   }
 }
 
-function loadAll() { loadFollowups(); loadBrain(); loadSpend(); refreshPauseState(); }
+function loadAll() { loadFollowups(); loadBrain(); loadSpend(); loadAwaitingConfirmation(); refreshPauseState(); }
 loadAll();
 
 let secondsLeft = 30;
