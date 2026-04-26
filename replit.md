@@ -34,6 +34,36 @@ console.log('DB host:', (process.env.PROD_DATABASE_URL || '').match(/@([^/]+)/)?
 
 ---
 
+## ⚠️ AGENT: OTHER RECURRING TRAPS ⚠️
+
+### 1. Variants A, B, C, D are intentionally distinct — never "reconcile" them
+The four conversation prompt variants have deliberately different voices, step counts, and booking-close lines (A neutral with 9 steps, B punchy with 10 steps, C urgent with 8 steps, D bold with 8 steps). They are **not** A/B/C/D copies of one script — they are four different scripts being tested against each other. If you query the prompts and see them looking identical, byte-equal, or near-equal in length, **you are reading the wrong source** (almost certainly the wrong DB — see the section above). Do not propose unifying them, deduplicating them, or suggesting one is "out of sync" with the others. Confirm distinctness against the prod DB before saying anything about variant content.
+
+### 2. The admin dashboard is one giant template literal in `server.js` — quote-nesting is a real footgun
+The entire admin UI HTML+CSS+JS is rendered by huge backtick template literals inside server.js (most of them under `/admin` and `/api/admin/*` routes). Inside those backticks live single-quoted JS strings, which sometimes contain English contractions. Words like **hasn't, can't, won't, doesn't, you're, it's, I'll, we're** will silently break the page if they sit unescaped inside a single-quoted string inside a backtick template — the prod admin "Loading…" bug at server.js:3777 was caused by exactly this (`'hasn't'` inside a single-quoted string inside a backtick template). Two safe options when editing admin HTML/JS strings:
+- Escape: `'has\\'t'` (works but ugly)
+- Rephrase: `'has not'`, `'cannot'`, `'will not'`, `'does not'`, `'you are'`, `'it is'`, `'I will'`, `'we are'` (preferred)
+
+When editing anything inside the admin template, scan your changes for contractions before saving.
+
+### 3. The user republishes manually — file/code changes are NOT live in prod until they confirm
+Two things to keep straight when reporting status to the user:
+- **DB writes** (anything written to the prod Neon database via `PROD_DATABASE_URL`) — these are live in prod **immediately**. Admin UI shows them on next refresh.
+- **File/code changes** (edits to `.js`, `.json`, `.md`, etc. in this workspace) — these only ship to prod when the user clicks Publish. Until then, prod runs the previously-deployed code.
+
+When telling the user something is "done" or "live", be explicit about which: "the DB is updated now; the file change ships on your next deploy" — never just "this is live now". This prevents the user from thinking a code-path change has reached prod when it hasn't.
+
+### 4. Source of truth for prompt content is the prod DB `ai_prompts` table — not the file
+`data/prompts.json` is a mirror, not a source. The boot logic in `prompts.js` (`syncFromDb`) is "DB wins": on every server start, the file gets overwritten with whatever is in `ai_prompts`. So:
+- **Read order:** trust the DB first. If the file disagrees with the DB, the DB is right.
+- **Write order:** when you change a prompt, write to BOTH places (file + DB) in the same operation. Use the canonical pool snippet from the wrong-DB section above against `PROD_DATABASE_URL`. The pattern `INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET value=$2, updated_at=$3` is what `prompts.js syncToDb` uses — copy it.
+- If you only edit the file, your change is alive only until the next server restart, then it gets erased by the DB content.
+- If you only edit the DB, the file in git stays stale — the next person reading the repo sees old content, and a future deploy of an empty DB would re-seed the wrong text.
+
+The admin UI's "Save" button on the Prompt Editor already does both correctly (`POST /admin/prompts/:name` writes to file AND calls `syncToDb`). Match that pattern in any one-off script.
+
+---
+
 ## Dev Mode (Local UI Testing)
 
 ### What it does
