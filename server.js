@@ -3852,7 +3852,7 @@ async function loadIssues() {
   const box = document.getElementById('issues-content');
   if (!box) return;
   try {
-    const res = await fetch('/api/admin/issues', { headers: { 'x-admin-key': ADMIN_KEY } });
+    const res = await fetchWithTimeout('/api/admin/issues', { headers: { 'x-admin-key': ADMIN_KEY } });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
     savedIssues = data.issues || [];
@@ -3928,6 +3928,15 @@ async function editIssue(id) {
 
 function escHtml(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function fetchWithTimeout(url, opts, ms) {
+  ms = ms || 15000;
+  var ctrl = new AbortController();
+  var timer = setTimeout(function() { ctrl.abort(); }, ms);
+  return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+    .then(function(r) { clearTimeout(timer); return r; })
+    .catch(function(e) { clearTimeout(timer); throw e.name === 'AbortError' ? new Error('Request timed out — server may still be starting. Refresh to retry.') : e; });
 }
 
 /* ── Format scheduled time (future-aware) ── */
@@ -4346,9 +4355,9 @@ async function triggerReplayInbound() {
 async function loadFollowups() {
   try {
     const [jobsRes, contactsRes, sentRes] = await Promise.all([
-      fetch('/api/followups?status=pending', { headers: { 'x-admin-key': ADMIN_KEY } }),
-      fetch('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } }),
-      fetch('/api/followups?status=sent', { headers: { 'x-admin-key': ADMIN_KEY } })
+      fetchWithTimeout('/api/followups?status=pending', { headers: { 'x-admin-key': ADMIN_KEY } }),
+      fetchWithTimeout('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } }),
+      fetchWithTimeout('/api/followups?status=sent', { headers: { 'x-admin-key': ADMIN_KEY } })
     ]);
     if (!jobsRes.ok) throw new Error('Queue load failed');
     const pending = await jobsRes.json();
@@ -4377,7 +4386,7 @@ async function loadBrain() {
   const el = document.getElementById('brain-content');
   try {
     const statsUrl = '/api/brain/stats' + (currentDays ? '?days=' + currentDays : '');
-    const res = await fetch(statsUrl, { headers: { 'x-admin-key': ADMIN_KEY } });
+    const res = await fetchWithTimeout(statsUrl, { headers: { 'x-admin-key': ADMIN_KEY } });
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
     const t = data.totals || {};
@@ -4559,7 +4568,7 @@ function setVariantLeadFormFilter(form) {
 async function loadSpend() {
   const el = document.getElementById('spend-content');
   try {
-    const res = await fetch('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } });
+    const res = await fetchWithTimeout('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } });
     if (!res.ok) throw new Error(res.statusText);
     const contacts = await res.json();
     const withSpend = contacts
