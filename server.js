@@ -1957,6 +1957,83 @@ app.get('/api/admin/paused', requireAdmin, (req, res) => {
   res.json({ paused: followups.isPaused() });
 });
 
+app.get('/api/admin/issues', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await _promptsPool.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `).then(() => _promptsPool.query(`SELECT value FROM app_settings WHERE key = 'issue_log' LIMIT 1`));
+    const issues = rows.length ? JSON.parse(rows[0].value || '[]') : [];
+    res.json({ ok: true, issues: Array.isArray(issues) ? issues : [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/issues', requireAdmin, async (req, res) => {
+  const { title, issue, solution, status, contactId, id } = req.body || {};
+  if (!title || !issue) return res.status(400).json({ error: 'title and issue are required' });
+  try {
+    await _promptsPool.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
+    const { rows } = await _promptsPool.query(`SELECT value FROM app_settings WHERE key = 'issue_log' LIMIT 1`);
+    const issues = rows.length ? JSON.parse(rows[0].value || '[]') : [];
+    const item = {
+      id: id || `issue-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      title: String(title).trim(),
+      issue: String(issue).trim(),
+      solution: String(solution || '').trim(),
+      status: status === 'done' ? 'done' : 'open',
+      contactId: String(contactId || '').trim() || null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    const existingIndex = issues.findIndex(i => i.id === item.id);
+    if (existingIndex >= 0) {
+      issues[existingIndex] = { ...issues[existingIndex], ...item, updatedAt: Date.now() };
+    } else {
+      issues.unshift(item);
+    }
+    await _promptsPool.query(
+      `INSERT INTO app_settings (key, value) VALUES ('issue_log', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1`,
+      [JSON.stringify(issues)]
+    );
+    res.json({ ok: true, issue: item, issues });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/issues/:id', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await _promptsPool.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
+    const { rows } = await _promptsPool.query(`SELECT value FROM app_settings WHERE key = 'issue_log' LIMIT 1`);
+    const issues = rows.length ? JSON.parse(rows[0].value || '[]') : [];
+    const next = issues.filter(i => i.id !== id);
+    await _promptsPool.query(
+      `INSERT INTO app_settings (key, value) VALUES ('issue_log', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1`,
+      [JSON.stringify(next)]
+    );
+    res.json({ ok: true, issues: next });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/admin/cancel-sms-jobs', requireAdmin, (req, res) => {
   const cancelled = followups.cancelAllPendingSmsJobs();
   res.json({ ok: true, cancelled });
@@ -3703,18 +3780,148 @@ ${DEV_MODE ? `<div style="position:fixed;top:0;left:0;right:0;z-index:9999;backg
   <div id="spend-content"><div class="loading">Loading&hellip;</div></div>
 </div>
 
+<div class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="panel-title">Saved Issues</div>
+    </div>
+  </div>
+  <p class="panel-desc">Drop in small bugs or weird replies you want to revisit later. Save the problem and the likely fix together so you do not have to rediscover it next time.</p>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px">
+    <input id="issue-title" type="text" placeholder="Short title" class="field-input" style="width:220px">
+    <input id="issue-contact" type="text" placeholder="Contact ID or name" class="field-input" style="width:220px">
+    <input id="issue-status" type="text" placeholder="open / done" value="open" class="field-input" style="width:120px">
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+    <textarea id="issue-problem" class="field-input" rows="4" placeholder="What happened?" style="width:100%;resize:vertical"></textarea>
+    <textarea id="issue-solution" class="field-input" rows="4" placeholder="What was the fix or next step?" style="width:100%;resize:vertical"></textarea>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+    <button class="action-btn action-btn-primary" onclick="saveIssue()">Save Issue</button>
+    <button class="action-btn" onclick="loadIssues()">Refresh</button>
+    <span id="issue-status-text" style="font-size:12px;color:#64748b;font-weight:600"></span>
+  </div>
+  <div id="issues-content"><div class="loading">Loading&hellip;</div></div>
+</div>
+
 <script>
 const ADMIN_KEY = ${JSON.stringify(adminKey)};
 let currentTab = 'pending';
 let allJobs = [];
 let contactMap = {};
 let currentDays = null;
+let savedIssues = [];
 
 function setDaysFilter(days, btn) {
   currentDays = days;
   document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
   btn.classList.add('active');
   loadBrain();
+}
+
+function fmtIssueTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function issueCard(i) {
+  const badge = i.status === 'done'
+    ? '<span class="badge b-booked">Done</span>'
+    : '<span class="badge b-pending">Open</span>';
+  const contact = i.contactId ? ' • ' + escHtml(i.contactId) : '';
+  const solution = i.solution ? `<div style="margin-top:8px;font-size:13px;color:#475569;line-height:1.6"><strong>Solution:</strong> ${escHtml(i.solution)}</div>` : '';
+  return '<div style="border:1px solid rgba(203,213,225,.7);border-radius:16px;padding:14px;margin-bottom:10px;background:#fff">' +
+    '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">' +
+      '<div>' +
+        '<div style="font-weight:800;color:#0f172a">' + escHtml(i.title || 'Untitled') + '</div>' +
+        '<div style="font-size:12px;color:#64748b;margin-top:4px">' + badge + '<span style="margin-left:8px">Saved ' + fmtIssueTime(i.createdAt) + '</span>' + contact + '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button class="action-btn" onclick="editIssue(' + JSON.stringify(i.id) + ')">Edit</button>' +
+        '<button class="action-btn action-btn-info" onclick="toggleIssueStatus(' + JSON.stringify(i.id) + ')">' + (i.status === 'done' ? 'Reopen' : 'Done') + '</button>' +
+        '<button class="action-btn action-btn-warn" onclick="deleteIssue(' + JSON.stringify(i.id) + ')">Delete</button>' +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:10px;font-size:13px;color:#475569;line-height:1.6"><strong>Problem:</strong> ' + escHtml(i.issue || '') + '</div>' +
+    solution +
+  '</div>';
+}
+
+async function loadIssues() {
+  const box = document.getElementById('issues-content');
+  if (!box) return;
+  try {
+    const res = await fetch('/api/admin/issues', { headers: { 'x-admin-key': ADMIN_KEY } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    savedIssues = data.issues || [];
+    box.innerHTML = savedIssues.length ? savedIssues.map(issueCard).join('') : '<div class="empty">No saved issues yet.</div>';
+  } catch (err) {
+    box.innerHTML = '<div class="empty">Failed to load issues: ' + escHtml(err.message) + '</div>';
+  }
+}
+
+async function saveIssue(existingId) {
+  const title = document.getElementById('issue-title').value.trim();
+  const contactId = document.getElementById('issue-contact').value.trim();
+  const status = document.getElementById('issue-status').value.trim().toLowerCase();
+  const issue = document.getElementById('issue-problem').value.trim();
+  const solution = document.getElementById('issue-solution').value.trim();
+  const statusEl = document.getElementById('issue-status-text');
+  if (!title || !issue) {
+    statusEl.textContent = 'Title and problem are required.';
+    return;
+  }
+  statusEl.textContent = 'Saving…';
+  try {
+    const res = await fetch(existingId ? `/api/admin/issues/${encodeURIComponent(existingId)}` : '/api/admin/issues', {
+      method: existingId ? 'POST' : 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
+      body: JSON.stringify({ title, contactId, status, issue, solution })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    document.getElementById('issue-title').value = '';
+    document.getElementById('issue-contact').value = '';
+    document.getElementById('issue-status').value = 'open';
+    document.getElementById('issue-problem').value = '';
+    document.getElementById('issue-solution').value = '';
+    statusEl.textContent = 'Saved.';
+    await loadIssues();
+  } catch (err) {
+    statusEl.textContent = 'Save failed: ' + err.message;
+  }
+}
+
+async function toggleIssueStatus(id) {
+  const item = savedIssues.find(i => i.id === id);
+  if (!item) return;
+  await fetch(`/api/admin/issues/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
+    body: JSON.stringify({ status: item.status === 'done' ? 'open' : 'done' })
+  });
+  await loadIssues();
+}
+
+async function deleteIssue(id) {
+  if (!confirm('Delete this saved issue?')) return;
+  await fetch(`/api/admin/issues/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { 'x-admin-key': ADMIN_KEY }
+  });
+  await loadIssues();
+}
+
+async function editIssue(id) {
+  const item = savedIssues.find(i => i.id === id);
+  if (!item) return;
+  document.getElementById('issue-title').value = item.title || '';
+  document.getElementById('issue-contact').value = item.contactId || '';
+  document.getElementById('issue-status').value = item.status || 'open';
+  document.getElementById('issue-problem').value = item.issue || '';
+  document.getElementById('issue-solution').value = item.solution || '';
+  document.getElementById('issue-status-text').textContent = 'Loaded into editor.';
 }
 
 function escHtml(s) {

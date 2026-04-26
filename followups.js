@@ -1229,6 +1229,14 @@ function _persistPauseState(paused) {
   ).catch(err => console.error('[Followups] Pause state persist error:', err.message));
 }
 
+function _persistIssueLog(issues) {
+  _pool.query(
+    `INSERT INTO app_settings (key, value) VALUES ('issue_log', $1)
+     ON CONFLICT (key) DO UPDATE SET value = $1`,
+    [JSON.stringify(issues || [])]
+  ).catch(err => console.error('[Followups] Issue log persist error:', err.message));
+}
+
 _initPauseStateFromDb();
 
 function pauseScheduler()  {
