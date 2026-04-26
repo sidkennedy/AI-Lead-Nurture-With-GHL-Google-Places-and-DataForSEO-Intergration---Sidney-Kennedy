@@ -2291,6 +2291,8 @@ app.get('/admin', (req, res) => {
     return res.status(401).send('Unauthorized. Add ?key=YOUR_ADMIN_KEY to the URL.');
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
   res.send(buildAdminDashboardPage(key));
 });
 
@@ -4308,17 +4310,33 @@ function replaySearchContacts(query) {
   selEl.textContent = '';
   if (!query || query.length < 2) { dd.style.display = 'none'; return; }
   const q = query.toLowerCase();
-  const matches = Object.values(contactMap)
-    .filter(c => ((c.firstName || '') + ' ' + (c.lastName || '')).toLowerCase().includes(q))
-    .slice(0, 8);
-  if (matches.length === 0) { dd.style.display = 'none'; return; }
-  dd.style.display = 'block';
-  dd.innerHTML = matches.map(c => {
-    const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || c.contactId;
-    return \`<div onclick="replaySelectContact('\${c.contactId}','\${escHtml(name)}')"
-      style="padding:10px 14px;font-size:13px;color:#334155;cursor:pointer;border-bottom:1px solid rgba(226,232,240,.6);font-weight:500"
-      onmouseover="this.style.background='rgba(236,253,245,.6)'" onmouseout="this.style.background=''">\${escHtml(name)}</div>\`;
-  }).join('');
+
+  function showMatches(contacts) {
+    const matches = contacts
+      .filter(c => ((c.firstName || '') + ' ' + (c.lastName || '') + ' ' + (c.contactId || '')).toLowerCase().includes(q))
+      .slice(0, 8);
+    if (matches.length === 0) { dd.style.display = 'none'; return; }
+    dd.style.display = 'block';
+    dd.innerHTML = matches.map(c => {
+      const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || c.contactId;
+      return '<div onclick="replaySelectContact(' + JSON.stringify(c.contactId) + ',' + JSON.stringify(name) + ')"' +
+        ' style="padding:10px 14px;font-size:13px;color:#334155;cursor:pointer;border-bottom:1px solid rgba(226,232,240,.6);font-weight:500"' +
+        ' onmouseover="this.style.background=\'rgba(236,253,245,.6)\'" onmouseout="this.style.background=\'\'">' + escHtml(name) + '</div>';
+    }).join('');
+  }
+
+  const cached = Object.values(contactMap);
+  if (cached.length > 0) {
+    showMatches(cached);
+  } else {
+    fetch('/api/contacts', { headers: { 'x-admin-key': ADMIN_KEY } })
+      .then(function(r) { return r.ok ? r.json() : []; })
+      .then(function(contacts) {
+        contacts.forEach(function(c) { contactMap[c.contactId] = c; });
+        showMatches(contacts);
+      })
+      .catch(function() { dd.style.display = 'none'; });
+  }
 }
 
 function replaySelectContact(contactId, name) {
