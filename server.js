@@ -1172,6 +1172,71 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
 
   let reply = response.content[0]?.text?.trim() || '';
 
+  // ─── Defensive outbound-quality guard (added Apr 26, pre-launch) ───
+  // Two failure modes observed in stress testing on variant A under extreme
+  // low-engagement prospects (4× "ok", or "maybe"/"I dunno" loops):
+  //   (a) verbatim duplicate of the last outbound
+  //   (b) third consecutive outbound carrying the same [STEP:N] marker —
+  //       which violates the prompt-level "HARD CAP" rule
+  // The prompt-level rules cover ~99% of cases; this guard catches the
+  // residual 1%. On a detected violation we retry the Claude call ONCE
+  // with a corrective system-prompt addendum, then let the retried reply
+  // fall through into the normal marker pipeline below. Single retry only —
+  // no infinite loops. Applies to every variant; benign on B/C/D since the
+  // guard only fires on actual violations.
+  {
+    const stripMarkers = (s) => String(s || '')
+      .replace(/\[(?:STEP:\d+|DECLINED|BOOKED|PRACTICE_DETECTED:[^\]]+)\]\s*/gi, '');
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+    const recentOutbounds = (fresh?.exchanges || [])
+      .filter(e => e.direction === 'outbound')
+      .slice(-2);
+    const lastOut = recentOutbounds.length
+      ? recentOutbounds[recentOutbounds.length - 1].body
+      : '';
+    const replyClean = norm(stripMarkers(reply));
+    const lastClean = norm(lastOut);
+    const isDuplicate = !!replyClean && !!lastClean && replyClean === lastClean;
+
+    let isHardCapViolation = false;
+    const _stepPre = reply.match(/\[STEP:(\d+)\]/i);
+    const _newStepPre = _stepPre ? parseInt(_stepPre[1], 10) : null;
+    if (_newStepPre !== null && recentOutbounds.length === 2 &&
+        recentOutbounds[0].step === _newStepPre &&
+        recentOutbounds[1].step === _newStepPre) {
+      isHardCapViolation = true;
+    }
+
+    const violation = isDuplicate ? 'duplicate' : (isHardCapViolation ? 'hard_cap' : null);
+    if (violation) {
+      const fname = resolvedFirstName || fresh?.firstName || 'there';
+      const nudge = violation === 'duplicate'
+        ? `\n\n!! REGENERATION REQUIRED: your draft is identical to the last message you already sent. Do NOT repeat yourself verbatim. The prospect is being vague. Either ask a DIFFERENT concrete yes/no clarifying question, or send the polite exit ("No worries ${fname} — text me if anything changes.") followed by [DECLINED].`
+        : `\n\n!! REGENERATION REQUIRED: you have already sent [STEP:${_newStepPre}] in your two most recent outbound messages. The HARD CAP forbids three in a row. You MUST either advance to [STEP:${_newStepPre + 1}] OR send the polite exit ("No worries ${fname} — text me if anything changes.") followed by [DECLINED]. Do NOT emit [STEP:${_newStepPre}] again.`;
+
+      console.warn(`[AiGen] Outbound rule violation (${violation}) for ${contactId} on variant ${contactVariant || 'none'} — retrying once with corrective nudge`);
+      try {
+        const retry = await anthropic.messages.create({
+          model,
+          max_tokens: 512,
+          system: systemContent + nudge,
+          messages
+        });
+        spend.track(contactId, model, retry.usage);
+        const retryText = retry.content[0]?.text?.trim() || '';
+        if (retryText) {
+          reply = retryText;
+        } else {
+          console.warn(`[AiGen] Retry returned empty for ${contactId} — keeping original draft`);
+        }
+      } catch (err) {
+        console.error(`[AiGen] Retry call failed for ${contactId}:`, err.message);
+        // Keep original reply: better to send a duplicate than nothing.
+      }
+    }
+  }
+
   // ── Extract hidden markers ──
 
   // [STEP:N] — track current step
