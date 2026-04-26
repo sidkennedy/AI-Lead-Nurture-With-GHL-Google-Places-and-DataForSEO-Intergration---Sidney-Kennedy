@@ -64,6 +64,9 @@ When telling the user something is "done" or "live", be explicit about which: "t
 
 The admin UI's "Save" button on the Prompt Editor already does both correctly (`POST /admin/prompts/:name` writes to file AND calls `syncToDb`). Match that pattern in any one-off script.
 
+### 5. When you renumber steps in a prompt variant, cross-references break silently
+The variant prompts are full of internal step references — RULES section ("EXCEPT the Step N bridge"), MAPS CONFIRMATION LOOP ("after the [PRACTICE_DETECTED] bridge in Step N"), EARLY BOOKING ("skip directly to Step N"), LIVE DATA ("use the real numbers in Step N"), NEVER REPEAT A QUESTION (which questions belong to which step), and the [STEP:N] valid-range note in RULES ("integer 1-N"). When you change the numbering of any step, **every one** of those references must be updated in the same edit pass. The Apr 26 Variant B renumber (8 steps → 7) missed the RULES line "EXCEPT the Step 6 bridge" — that contradiction made the bridge non-deterministic until hotfixed. Audit checklist before saving a renumber: search the prompt text for every `Step \d` occurrence and reconcile each one against the new numbering, then re-confirm the [STEP:N] integer range cap matches the highest step number.
+
 ---
 
 ## Dev Mode (Local UI Testing)
