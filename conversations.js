@@ -12,9 +12,15 @@ let _ready = false;
 
 async function initFromDb() {
   try {
-    // Ensure the variant + lead_form columns exist before reading — idempotent, safe on every start.
+    // Ensure the variant + lead_form + paused_reason columns exist before reading —
+    // idempotent, safe on every start.
+    // paused_reason classifies why contacts.booked was flipped:
+    //   'verbal-commit' — AI fired [BOOKED] (prospect agreed to book)
+    //   'declined'      — AI fired [DECLINED] (prospect said no — terminal)
+    //   null            — legacy rows (treated as verbal-commit for back-compat)
     await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS variant varchar(1)').catch(() => {});
     await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS lead_form TEXT').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS paused_reason TEXT').catch(() => {});
     const { rows: contacts } = await pool.query('SELECT * FROM contacts');
     for (const c of contacts) {
       _cache[c.contact_id] = {
@@ -34,6 +40,7 @@ async function initFromDb() {
         apiSpendLimitReached:  c.api_spend_limit_reached || false,
         variant:               c.variant || null,
         leadForm:              c.lead_form || 'unknown',
+        pausedReason:          c.paused_reason || null,
         ...(c.extra || {}),
         exchanges: []
       };
@@ -96,8 +103,8 @@ function _dbUpsertContact(record) {
     `INSERT INTO contacts
        (contact_id, first_name, city, phone, email, practice_name, tags,
         current_step, booked, booked_at, last_message_at, created_at, extra,
-        total_api_spend, api_spend_limit_reached, variant, lead_form)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        total_api_spend, api_spend_limit_reached, variant, lead_form, paused_reason)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      ON CONFLICT (contact_id) DO UPDATE SET
        first_name              = EXCLUDED.first_name,
        city                    = EXCLUDED.city,
@@ -113,7 +120,8 @@ function _dbUpsertContact(record) {
        total_api_spend         = EXCLUDED.total_api_spend,
        api_spend_limit_reached = EXCLUDED.api_spend_limit_reached,
        variant                 = EXCLUDED.variant,
-       lead_form               = EXCLUDED.lead_form`,
+       lead_form               = EXCLUDED.lead_form,
+       paused_reason           = EXCLUDED.paused_reason`,
     [
       record.contactId, record.firstName, record.city,
       record.phone, record.email, record.practiceName,
@@ -125,7 +133,8 @@ function _dbUpsertContact(record) {
       record.totalApiSpend || 0,
       record.apiSpendLimitReached || false,
       record.variant || null,
-      record.leadForm || 'unknown'
+      record.leadForm || 'unknown',
+      record.pausedReason || null
     ]
   ).catch(err => console.error('[Conversations] DB upsert error:', err.message));
 }

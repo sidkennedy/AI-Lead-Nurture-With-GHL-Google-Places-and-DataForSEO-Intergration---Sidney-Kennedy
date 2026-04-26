@@ -969,10 +969,26 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
   });
 }
 
+// Signature of the "Not interested" rejection-handler outbound. Used by the
+// [BOOKED] hallucination guard below to recognize a prior decline even if
+// Claude forgot to emit the [DECLINED] marker on that turn.
+const _REJECTION_SIGNATURE = /text me if anything changes/i;
+
+function _wasLastOutboundRejection(fresh) {
+  const exchanges = fresh?.exchanges || [];
+  for (let i = exchanges.length - 1; i >= 0; i--) {
+    const ex = exchanges[i];
+    if (ex.direction === 'outbound') {
+      return _REJECTION_SIGNATURE.test(ex.body || '');
+    }
+  }
+  return false;
+}
+
 // ─── AI Generation Pipeline ───────────────────────────────────────────────────
 // Builds the message history + variant-specific system prompt, calls Claude,
-// processes hidden markers ([STEP:N], [PRACTICE_DETECTED:…], [BOOKED]), sends
-// the reply via GHL, and persists the exchange. Called from:
+// processes hidden markers ([STEP:N], [PRACTICE_DETECTED:…], [BOOKED],
+// [DECLINED]), sends the reply via GHL, and persists the exchange. Called from:
 //   • handleInbound — every inbound webhook that isn't intercepted by the
 //                     confirmation / retry-name short-circuits
 //   • scheduleAiResponseAfterResearch — to generate the next scripted step
@@ -1143,6 +1159,23 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
     }
   }
 
+  // [DECLINED] — the AI fired the rejection handler ("No worries [name] — text
+  // me if anything changes."). Pause the AI like [BOOKED] does, but tag the
+  // pause as 'declined' so the contact does NOT appear in Pending Booking
+  // Confirmations and we can detect future [BOOKED] hallucinations on the
+  // same contact. The reply text itself still goes out (only the marker is
+  // stripped) — UNLESS the same turn also contains [BOOKED], which is a
+  // contradictory mixed-marker hallucination handled below.
+  // Marker detection is case-insensitive to absorb any casing drift from
+  // Claude (e.g. [Booked], [declined]).
+  const hasDeclinedMarker = /\[DECLINED\]/i.test(reply);
+  const hasBookedMarker   = /\[BOOKED\]/i.test(reply);
+  if (hasDeclinedMarker) {
+    reply = reply.replace(/\[DECLINED\]\s*/gi, '').trim();
+    conversations.update(contactId, { booked: true, pausedReason: 'declined' });
+    console.log(`[AiGen] Contact ${contactId} declined — AI paused (paused_reason=declined)`);
+  }
+
   // [BOOKED] — the AI thinks the prospect agreed to a time. This ONLY pauses
   // the AI (so it stops responding and follow-ups stop firing). It does NOT
   // count as a real booking on the dashboard — that requires a confirmed
@@ -1150,10 +1183,28 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
   // brain.recordBooking() to mark the booking in the stats. This split lets
   // the dashboard's booking-rate stat reflect only confirmed calendar
   // bookings, not the AI's optimistic interpretation of the conversation.
-  if (reply.includes('[BOOKED]')) {
+  //
+  // Hallucination guard fires (and the entire reply is discarded) when ANY of:
+  //   • The contact is already paused as declined (prior turn).
+  //   • The most recent outbound was the rejection handler (legacy contacts
+  //     declined before [DECLINED] existed in the prompts).
+  //   • This same turn ALSO emitted [DECLINED] — contradictory mixed-marker
+  //     output. Saying "No worries — text me if anything changes." AND
+  //     "Locked in. Calendar invite incoming." in the same SMS would whiplash
+  //     the prospect; safer to send nothing and keep them paused as declined.
+  if (hasBookedMarker) {
     reply = reply.replace(/\[BOOKED\]\s*/gi, '').trim();
-    conversations.update(contactId, { booked: true });
-    console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused, awaiting GHL appointment confirmation`);
+    const isHallucination = fresh.pausedReason === 'declined'
+                         || _wasLastOutboundRejection(fresh)
+                         || hasDeclinedMarker;
+    if (isHallucination) {
+      console.warn(`[AiGen] [BOOKED] hallucination suppressed for ${contactId} (declined-context). Reply discarded: "${reply.slice(0, 80)}"`);
+      conversations.update(contactId, { booked: true, pausedReason: 'declined' });
+      reply = '';
+    } else {
+      conversations.update(contactId, { booked: true, pausedReason: 'verbal-commit' });
+      console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused (paused_reason=verbal-commit), awaiting GHL appointment confirmation`);
+    }
   }
 
   // Update step
@@ -1894,11 +1945,15 @@ app.post('/api/admin/replay-inbound', requireAdmin, async (req, res) => {
 // Returns contacts the AI paused ([BOOKED] marker) but that have NOT yet been
 // confirmed as a real booking (no brain_messages.booked record). These are the
 // prospects who verbally agreed in chat but may not have hit the calendar yet.
+// Excludes contacts whose pause was triggered by the [DECLINED] rejection
+// handler (paused_reason='declined') — those prospects said no, not yes.
+// Legacy rows with paused_reason=NULL are still surfaced (treated as
+// verbal-commit) so existing pre-feature contacts remain reviewable.
 app.get('/api/admin/awaiting-confirmation', requireAdmin, (req, res) => {
   const bookedSet = brain.getBookedContactIds();
   const all = conversations.getAll();
   const awaiting = Object.values(all)
-    .filter(c => c.booked && !bookedSet.has(c.contactId))
+    .filter(c => c.booked && !bookedSet.has(c.contactId) && c.pausedReason !== 'declined')
     .map(c => ({ contactId: c.contactId, firstName: c.firstName || '—', city: c.city || '' }));
   res.json({ ok: true, awaiting });
 });
@@ -1915,7 +1970,26 @@ app.post('/api/admin/confirm-booking', requireAdmin, async (req, res) => {
   const alreadyConfirmed = brain.getBookedContactIds().has(contactId);
   if (alreadyConfirmed) return res.json({ ok: true, alreadyConfirmed: true, firstName: contact.firstName });
   await brain.recordBooking(contactId);
+  // Promote pause reason to verbal-commit so the row is recorded as a real
+  // booking (and won't drift back into the panel after a future dismiss flow).
+  conversations.update(contactId, { pausedReason: 'verbal-commit' });
   console.log(`[ConfirmBooking] Admin confirmed booking for ${contact.firstName} (${contactId})`);
+  res.json({ ok: true, firstName: contact.firstName });
+});
+
+// ─── Admin: Dismiss a Pending Booking Confirmation ───────────────────────────
+// Used when the AI mistakenly fired [BOOKED] on a prospect who actually
+// declined — flips paused_reason='declined' so the contact disappears from
+// the Pending Booking Confirmations panel. The AI stays paused (booked=true
+// is preserved), so no further messages will be sent to this contact.
+app.post('/api/admin/dismiss-booking', requireAdmin, (req, res) => {
+  const { contactId } = req.body || {};
+  if (!contactId) return res.status(400).json({ error: 'contactId is required' });
+  const contact = conversations.get(contactId);
+  if (!contact) return res.status(404).json({ error: 'Contact not found' });
+  if (!contact.booked) return res.status(400).json({ error: 'Contact is not in a paused state' });
+  conversations.update(contactId, { pausedReason: 'declined' });
+  console.log(`[DismissBooking] Admin dismissed false-positive booking for ${contact.firstName} (${contactId}) — paused_reason=declined`);
   res.json({ ok: true, firstName: contact.firstName });
 });
 
@@ -2496,6 +2570,10 @@ function _extractPlaygroundMarkers(text, session) {
   if (display.includes('[BOOKED]')) {
     markers.push({ type: 'BOOKED', value: true });
     display = display.replace(/\[BOOKED\]\s*/gi, '').trim();
+  }
+  if (display.includes('[DECLINED]')) {
+    markers.push({ type: 'DECLINED', value: true });
+    display = display.replace(/\[DECLINED\]\s*/gi, '').trim();
   }
   return { display, markers };
 }
@@ -3699,16 +3777,22 @@ async function loadAwaitingConfirmation() {
       return;
     }
     el.innerHTML = list.map(c => {
+      const cid  = escHtml(c.contactId);
       const name = escHtml(c.firstName || '—');
       const loc  = escHtml(c.city || '');
-      return \`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(203,213,225,.2)">
+      return \`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(203,213,225,.2)">
         <div style="flex:1">
           <span style="font-weight:600;color:#e2e2e2">\${name}</span>
-          \${loc ? '<span style="color:#64748b;margin-left:6px">\${loc}</span>' : ''}
+          \${loc ? \`<span style="color:#64748b;margin-left:6px">\${loc}</span>\` : ''}
         </div>
-        <button onclick="confirmBooking('\${escHtml(c.contactId)}',this)"
+        <button onclick="confirmBooking('\${cid}',this)"
           style="font-size:11px;font-weight:600;padding:4px 12px;border-radius:6px;border:1px solid #16a34a;background:#052e16;color:#4ade80;cursor:pointer">
           Confirm Booking
+        </button>
+        <button onclick="dismissBooking('\${cid}',this)"
+          title="Use this if the AI mistakenly thought they booked. Marks them as declined and they disappear from this list. The AI stays paused either way."
+          style="font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;border:1px solid #475569;background:#1e293b;color:#94a3b8;cursor:pointer">
+          Not a booking
         </button>
       </div>\`;
     }).join('');
@@ -3733,6 +3817,25 @@ async function confirmBooking(contactId, btn) {
     btn.style.color = '#94a3b8';
     loadBrain();
     setTimeout(() => loadAwaitingConfirmation(), 800);
+  } catch (err) {
+    btn.textContent = 'Error';
+    btn.disabled = false;
+  }
+}
+
+async function dismissBooking(contactId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Dismissing…';
+  try {
+    const res = await fetch('/api/admin/dismiss-booking', {
+      method: 'POST',
+      headers: { 'x-admin-key': ADMIN_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ contactId })
+    });
+    const data = await res.json();
+    if (!res.ok) { btn.textContent = data.error || 'Error'; btn.disabled = false; return; }
+    btn.textContent = 'Dismissed';
+    setTimeout(() => loadAwaitingConfirmation(), 600);
   } catch (err) {
     btn.textContent = 'Error';
     btn.disabled = false;

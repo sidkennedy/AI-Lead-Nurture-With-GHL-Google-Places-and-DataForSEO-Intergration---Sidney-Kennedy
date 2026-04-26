@@ -75,19 +75,24 @@ Markers in use:
 
 ## Booking Flow
 
-Three signals can flip a contact's local "stop talking to them" flag — but only confirmed-calendar signals count for dashboard stats.
+Four signals can flip a contact's local "stop talking to them" flag — but only confirmed-calendar signals count for dashboard stats. The `contacts.paused_reason` column classifies *why* the AI was paused so the Pending Booking Confirmations panel can surface true verbal commits and hide rejections.
 
-| Path | Trigger | `contacts.booked` | `brain_messages.booked` (dashboard stat) |
-|------|---------|:-----------------:|:----------------------------------------:|
-| 1. GHL appointment webhook (`/webhooks/ghl/appointment`) | Calendar appointment created in GHL | ✅ | ✅ |
-| 2. AI `[BOOKED]` marker in reply | The AI thinks the prospect agreed to a time | ✅ | ❌ (just pauses the AI) |
-| 3. Admin manual backfill | User clicks "mark as booked" | ✅ | ✅ |
+| Path | Trigger | `contacts.booked` | `paused_reason` | `brain_messages.booked` (dashboard stat) |
+|------|---------|:-----------------:|:---------------:|:----------------------------------------:|
+| 1. GHL appointment webhook (`/webhooks/ghl/appointment`) | Calendar appointment created in GHL | ✅ | `verbal-commit` | ✅ |
+| 2. AI `[BOOKED]` marker in reply | The AI thinks the prospect agreed to a time | ✅ | `verbal-commit` | ❌ (just pauses the AI) |
+| 3. AI `[DECLINED]` marker in reply | The AI fired the "Not interested" rejection handler | ✅ | `declined` | ❌ (pauses the AI as a hard stop) |
+| 4. Admin manual backfill / "Confirm Booking" | User clicks the confirmation button on the dashboard | ✅ | `verbal-commit` | ✅ |
 
-**Why split:** Path 2 is the AI's optimistic interpretation — counting it as a real booking inflates the booking-rate stat with prospects who never actually showed up on the calendar. So Path 2 only pauses the AI; it doesn't get recorded in `brain_messages.booked`.
+**Why split:** Path 2 is the AI's optimistic interpretation — counting it as a real booking inflates the booking-rate stat with prospects who never actually showed up on the calendar. So Path 2 only pauses the AI; it doesn't get recorded in `brain_messages.booked`. Path 3 (`[DECLINED]`) is the same idea in reverse: pause the AI on a clean rejection without polluting the verbal-commit panel.
 
 **Source of truth for stats:** All dashboard booking metrics MUST read from `brain_messages.booked` (via `brain.getStats()` for totals or `brain.getBookedContactIds()` for per-variant counting), NEVER from `contacts.booked`. The variant performance endpoint at `/api/brain/variants` was the last reader of `contacts.booked` for stat purposes — it now uses `brain.getBookedContactIds()`.
 
-**Idempotency:** All three paths early-exit if the contact is already `booked`, so paths firing in any order (or all three for the same contact) won't double-count.
+**Pending Booking Confirmations panel** (`/api/admin/awaiting-confirmation`): surfaces contacts with `booked=true` AND no `brain_messages.booked` row AND `paused_reason !== 'declined'`. Each row has two actions: **Confirm Booking** (calls `brain.recordBooking()` + flips `paused_reason` → `verbal-commit`, counts toward stats) and **Not a booking** (calls `/api/admin/dismiss-booking` to flip `paused_reason` → `declined`, removes the row without counting). Legacy rows (`paused_reason=NULL`) are treated as `verbal-commit` for back-compat.
+
+**Hallucination guard** (`server.js _wasLastOutboundRejection`): if Claude emits `[BOOKED]` after a prior rejection (either `paused_reason='declined'` already set, or the most recent outbound contained the rejection signature `text me if anything changes`), the bogus reply is discarded — the marker is stripped, `paused_reason` stays `declined`, and nothing is sent. This is the safety net for the prompt-level "AFTER A DECLINE — CONVERSATION IS OVER" rules in every variant.
+
+**Idempotency:** All four paths early-exit if the contact is already `booked`, so paths firing in any order (or all four for the same contact) won't double-count.
 
 ## Lead Form Segmentation
 Contacts are bucketed by their Facebook lead form via the GHL tag `ampifyform:<slug>` (e.g. `ampifyform:high-volume`, `ampifyform:high-intent`, `ampifyform:high-intent-2FA`). The slug is lowercased and stored on `contacts.lead_form`; missing tags default to `unknown`. The value is re-derived on every `ContactUpdate` webhook and snapshotted onto each outbound `brain_messages.lead_form` so historical analytics stay accurate even if tags change. The admin dashboard's Performance panel and Prompt Editor both surface per-form breakdowns and let you filter A/B/C/D variant performance by lead form. Measurement only — script selection is unaffected.
