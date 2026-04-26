@@ -1263,10 +1263,26 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
     const isHallucination = fresh.pausedReason === 'declined'
                          || _wasLastOutboundRejection(fresh)
                          || hasDeclinedMarker;
+    // Hard gate (added Apr 26): refuse to honor [BOOKED] until both LIVE
+    // RESEARCH DATA and SCAN RESULTS were present in the system context for
+    // this generation. Without both, the prospect was never qualified — the
+    // founder Sid would join the call without the personalized data the
+    // entire pitch hinges on. The prompt-level "NEVER BOOK BEFORE QUALIFYING"
+    // rule covers 99% of cases; this gate is the belt-and-suspenders for the
+    // 1% where the model drifts. Strip the marker, keep the conversation
+    // active, and DON'T pause the AI so the next prospect message gets a
+    // normal reply (model will redirect via the in-prompt pivot string).
+    const lacksQualification = !fresh?.researchData || !fresh?.scanResults;
     if (isHallucination) {
       console.warn(`[AiGen] [BOOKED] hallucination suppressed for ${contactId} (declined-context). Reply discarded: "${reply.slice(0, 80)}"`);
       conversations.update(contactId, { booked: true, pausedReason: 'declined' });
       reply = '';
+    } else if (lacksQualification) {
+      console.warn(`[AiGen] [BOOKED] suppressed for ${contactId} (premature: researchData=${!!fresh?.researchData}, scanResults=${!!fresh?.scanResults}). Reply kept, AI not paused. Reply: "${reply.slice(0, 80)}"`);
+      // Do NOT pause. Do NOT mark booked. Reply text stays so the prospect
+      // gets some response, but the conversation continues so the AI can
+      // properly qualify on the next turn. (The prompt's pivot string should
+      // be in the reply already; if not, at least we preserved the message.)
     } else {
       conversations.update(contactId, { booked: true, pausedReason: 'verbal-commit' });
       console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused (paused_reason=verbal-commit), awaiting GHL appointment confirmation`);
