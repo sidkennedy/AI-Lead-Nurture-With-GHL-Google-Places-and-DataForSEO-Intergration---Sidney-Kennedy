@@ -3774,7 +3774,7 @@ async function loadAwaitingConfirmation() {
     const data = await res.json();
     const list = data.awaiting || [];
     if (list.length === 0) {
-      el.innerHTML = '<span style="color:#64748b">None — all AI-paused contacts are confirmed or the AI hasn\'t detected any verbal commitments yet.</span>';
+      el.innerHTML = '<span style="color:#64748b">None — all AI-paused contacts are confirmed or the AI has not detected any verbal commitments yet.</span>';
       return;
     }
     el.innerHTML = list.map(c => {
