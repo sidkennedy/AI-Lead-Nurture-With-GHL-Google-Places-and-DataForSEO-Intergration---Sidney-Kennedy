@@ -299,23 +299,28 @@ function seed() {
 }
 
 // ─── PostgreSQL Sync ──────────────────────────────────────────────────────────
-// Prompts are stored in data/prompts.json for fast synchronous reads.
-// The DB (ai_prompts table) is the durable source of truth — it survives
-// redeployments. On startup the server loads from DB into the file.
-// On every save the server writes to both simultaneously.
+// Prompts live in BOTH data/prompts.json (fast sync reads) and ai_prompts (DB).
+// Boot sync uses file-mtime vs DB-updated_at to decide which side wins, so:
+//   • A fresh deploy (file mtime = checkout time) → file is newer → file→DB push
+//     (this auto-heals the "I edited the file but the DB has stale prompts that
+//     keep overriding it" trap that bit us repeatedly — see replit.md trap #6).
+//   • A UI prompt save (DB updated_at = now, file untouched on disk by deploys
+//     since) → DB is newer → DB→file pull (UI edits persist across restarts).
+// Per-key save (POST /admin/prompts/:name) writes to both file AND DB
+// simultaneously via syncToDb, so they stay aligned during normal operation.
 
 /**
- * Load all prompts from the DB and merge into the local JSON file.
- * DB values win over file values (DB is the production source of truth).
- * Called once on server startup.
+ * Smart bidirectional sync. Compares file mtime against the most recent DB
+ * updated_at; whichever side is newer wins.
  * @param {import('pg').Pool} pool
  */
 async function syncFromDb(pool) {
   try {
-    const { rows } = await pool.query('SELECT name, value FROM ai_prompts');
+    const { rows } = await pool.query('SELECT name, value, updated_at FROM ai_prompts');
+    const stored = load();
+
     if (rows.length === 0) {
-      // Nothing in DB yet — push current file contents up to DB
-      const stored = load();
+      // Nothing in DB yet — push current file contents up to DB.
       for (const [name, value] of Object.entries(stored)) {
         await pool.query(
           'INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING',
@@ -325,21 +330,57 @@ async function syncFromDb(pool) {
       console.log(`[Prompts] DB empty — seeded ${Object.keys(stored).length} prompts from file`);
       return;
     }
-    // DB has data — merge into local file (DB wins)
-    const stored = load();
-    let changed = 0;
-    for (const row of rows) {
-      if (stored[row.name] !== row.value) {
-        stored[row.name] = row.value;
-        changed++;
-      }
-    }
-    if (changed > 0) {
-      save(stored);
-      console.log(`[Prompts] Synced ${changed} prompt(s) from DB into local file`);
-    } else {
+
+    // Determine direction by comparing file mtime against the newest DB write.
+    let fileMtime = 0;
+    try { fileMtime = fs.statSync(FILE).mtimeMs; } catch {}
+    const dbMaxUpdatedAt = rows.reduce((m, r) => {
+      const n = Number(r.updated_at);
+      return Math.max(m, Number.isFinite(n) ? n : 0);
+    }, 0);
+
+    // Find which conversation prompt keys actually differ between file and DB.
+    const diffs = rows.filter(r => stored[r.name] !== r.value);
+
+    if (diffs.length === 0) {
       console.log(`[Prompts] DB sync complete — ${rows.length} prompt(s) already up to date`);
+      return;
     }
+
+    // 5-second slop tolerates the small mtime/updated_at skew that happens when
+    // the same admin save writes file then DB within a few hundred ms.
+    const fileWins = fileMtime > dbMaxUpdatedAt + 5000;
+
+    if (fileWins) {
+      // Fresh deploy / file edit — push file content to DB so the DB stops
+      // overriding it on subsequent boots. Only push keys that the file knows
+      // about; leave DB-only keys alone.
+      let pushed = 0;
+      for (const row of rows) {
+        if (!(row.name in stored)) continue;
+        if (stored[row.name] === row.value) continue;
+        await pool.query(
+          'INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET value=$2, updated_at=$3',
+          [row.name, stored[row.name], Date.now()]
+        );
+        pushed++;
+      }
+      console.log(`[Prompts] File is newer than DB (mtime ${new Date(fileMtime).toISOString()} > db ${new Date(dbMaxUpdatedAt).toISOString()}) — pushed ${pushed} prompt(s) FILE → DB (auto-heal of trap #6).`);
+      const diffNames = diffs.map(r => r.name).join(', ');
+      console.log(`[Prompts]   keys reconciled: ${diffNames}`);
+      return;
+    }
+
+    // Default: DB-wins (preserves UI edits across restarts when the file
+    // wasn't redeployed in between).
+    let changed = 0;
+    for (const row of diffs) {
+      stored[row.name] = row.value;
+      changed++;
+    }
+    save(stored);
+    console.log(`[Prompts] DB is newer than file (db ${new Date(dbMaxUpdatedAt).toISOString()} > mtime ${new Date(fileMtime).toISOString()}) — pulled ${changed} prompt(s) DB → FILE.`);
+    console.log(`[Prompts]   keys reconciled: ${diffs.map(r => r.name).join(', ')}`);
   } catch (err) {
     console.error('[Prompts] DB sync error:', err.message, '— continuing with local file');
   }

@@ -85,14 +85,24 @@ GHL occasionally fails to deliver the inbound webhook to the server, even when t
 
 **Saved Issues panel:** Added Apr 26. Lives at the bottom of the admin dashboard. Stores bugs/patterns you want to revisit later without fixing immediately — title, problem description, solution/next-step notes, optional contact reference, open/done status. The GHL webhook-miss issue is pre-seeded there. Use it whenever something weird happens and you are not ready to fix it yet — saves re-investigation cost next time.
 
-### 6. Source of truth for prompt content is the prod DB `ai_prompts` table — not the file
-`data/prompts.json` is a mirror, not a source. The boot logic in `prompts.js` (`syncFromDb`) is "DB wins": on every server start, the file gets overwritten with whatever is in `ai_prompts`. So:
-- **Read order:** trust the DB first. If the file disagrees with the DB, the DB is right.
-- **Write order:** when you change a prompt, write to BOTH places (file + DB) in the same operation. Use the canonical pool snippet from the wrong-DB section above against `PROD_DATABASE_URL`. The pattern `INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET value=$2, updated_at=$3` is what `prompts.js syncToDb` uses — copy it.
-- If you only edit the file, your change is alive only until the next server restart, then it gets erased by the DB content.
-- If you only edit the DB, the file in git stays stale — the next person reading the repo sees old content, and a future deploy of an empty DB would re-seed the wrong text.
+### 6. Prompt file/DB sync — auto-heal landed 2026-04-27, but the trap shape is permanent
+**Symptom that keeps biting:** "I edited `data/prompts.json` (or it changed via git/deploy), redeployed, AI on production is STILL using the old prompt content." Bit the project at least 3 times. Most recently caused live SMS to keep saying "want to get that in the calendar?" / "Locked in. I'll send the calendar invite. [BOOKED]" after the VSL flow overhaul commits `d842968` and `486e02e` were deployed.
 
-The admin UI's "Save" button on the Prompt Editor already does both correctly (`POST /admin/prompts/:name` writes to file AND calls `syncToDb`). Match that pattern in any one-off script.
+**Root cause:** Prompts live in two places — `data/prompts.json` (read by `prompts.get()` on every call, no in-memory cache) and the `ai_prompts` table (durable across deploys). The original `syncFromDb` was hardcoded "DB wins": at boot it would unconditionally overwrite the file with DB content. So a fresh deploy that shipped new file content would have that content **erased** by stale DB rows from a previous UI edit (or from before a prompt change was committed), and the AI would silently keep using the old script forever.
+
+**Auto-heal (2026-04-27, `prompts.js syncFromDb`):** The boot now compares `fs.statSync(FILE).mtimeMs` against `MAX(ai_prompts.updated_at)` (with a 5-second slop) and lets the **newer side win**:
+- Fresh deploy → file mtime = checkout time, > DB updated_at → **file → DB push** (the new content survives).
+- Admin UI prompt save → DB updated_at = now, file untouched on prod fs → **DB → file pull** (UI edits persist across restarts).
+- Boot logs `[Prompts] File is newer than DB ... pushed N prompt(s) FILE → DB (auto-heal of trap #6)` or `[Prompts] DB is newer than file ... pulled N prompt(s) DB → FILE` so the direction is always visible. **Watch for these on every prod boot.**
+
+**Manual escape hatch:** If the auto-heal doesn't fire (e.g. mtime got clobbered, or you want to force file-wins regardless), run `npm run prompts:push` (= `node scripts/prompts-sync-file-to-db.js`). It UPSERTs every `conversationPrompt*` / `followup.*` / `email.*` key from the file into prod `ai_prompts` with `updated_at = now`, then tells you to restart prod so the next `syncFromDb` pulls the corrected DB into the prod file.
+
+**Recovery checklist when this bites again:**
+1. `node -e "..."` query `SELECT name, LENGTH(value), updated_at FROM ai_prompts ORDER BY name` — does the DB length match `data/prompts.json` length? If not, divergence confirmed.
+2. Check the boot log for the `[Prompts] File is newer / DB is newer` line — what direction did the auto-heal pick? If "DB → file" but you expected the opposite, force it with `npm run prompts:push` then restart prod.
+3. After restart, the boot log should show `[Prompts] DB sync complete — N prompt(s) already up to date`. If not, divergence is still present.
+
+**Write order for one-off scripts:** when you change a prompt programmatically, write to BOTH places in the same operation. The canonical UPSERT is `INSERT INTO ai_prompts (name, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET value=$2, updated_at=$3`. The admin UI's "Save" on `POST /admin/prompts/:name` already does this correctly via `set()` (file) + `syncToDb` (DB) — match that pattern.
 
 ### 7. When you renumber steps in a prompt variant, cross-references break silently
 The variant prompts are full of internal step references — RULES section ("EXCEPT the Step N bridge"), MAPS CONFIRMATION LOOP ("after the [PRACTICE_DETECTED] bridge in Step N"), EARLY BOOKING ("skip directly to Step N"), LIVE DATA ("use the real numbers in Step N"), NEVER REPEAT A QUESTION (which questions belong to which step), and the [STEP:N] valid-range note in RULES ("integer 1-N"). When you change the numbering of any step, **every one** of those references must be updated in the same edit pass. The Apr 26 Variant B renumber (8 steps → 7) missed the RULES line "EXCEPT the Step 6 bridge" — that contradiction made the bridge non-deterministic until hotfixed. Audit checklist before saving a renumber: search the prompt text for every `Step \d` occurrence and reconcile each one against the new numbering, then re-confirm the [STEP:N] integer range cap matches the highest step number.
