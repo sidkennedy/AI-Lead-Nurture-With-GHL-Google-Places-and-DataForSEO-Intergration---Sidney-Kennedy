@@ -1182,6 +1182,28 @@ async function processJob(job) {
     return;
   }
 
+  // Live "Disable AI" check — fetch fresh tags from GHL at fire time so we
+  // honour any tag added since the last inbound (the contact-updated webhook
+  // is an optional extra layer; this makes the tag effective even without it).
+  try {
+    const liveContact = await ghl.fetchContact(job.contactId);
+    if (liveContact) {
+      const liveTags = (liveContact.tags || []).map(t => t.toLowerCase());
+      if (liveTags.includes('disable ai')) {
+        updateJob(job.id, { status: 'cancelled', error: 'Disable AI tag' });
+        cancelContactJobs(job.contactId);
+        cancelEmailJobs(job.contactId);
+        conversations.update(job.contactId, { tags: liveContact.tags });
+        console.log(`[Followups] Contact ${job.contactId} has "Disable AI" tag (live GHL check) — all jobs cancelled`);
+        return;
+      }
+      // Keep local tags in sync so shouldStopEmail and other checks see the latest
+      conversations.update(job.contactId, { tags: liveContact.tags });
+    }
+  } catch (err) {
+    console.warn(`[Followups] GHL tag check failed for ${job.contactId}: ${err.message} — proceeding without live check`);
+  }
+
   if (job.type === 'silence-check') {
     await processSilenceCheck(job);
   } else if (job.type === 'email-hook' || job.type === 'email-nurture') {

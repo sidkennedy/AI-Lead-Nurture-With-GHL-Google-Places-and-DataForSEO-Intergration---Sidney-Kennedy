@@ -1115,7 +1115,8 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     fresh,
     rawGhlMessages,
     resolvedFirstName,
-    resolvedCity
+    resolvedCity,
+    messageBody
   });
 }
 
@@ -1150,6 +1151,7 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
   const _lock = outboundLock.acquire(contactId);
   try {
   let fresh = opts.fresh || conversations.get(contactId);
+  const messageBody = opts.messageBody ?? '';
   if (!fresh) {
     console.log(`[AiGen] No contact record for ${contactId} — skipping`);
     return;
