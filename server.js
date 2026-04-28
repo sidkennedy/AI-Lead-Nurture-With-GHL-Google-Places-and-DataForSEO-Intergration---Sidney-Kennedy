@@ -3479,6 +3479,136 @@ app.get('/api/enroll/status/:jobId', requireAdmin, (req, res) => {
   res.json({ ok: true, status: 'done', ...job.result });
 });
 
+// ─── Admin: Off-Script Reply Handler Regression Harness ───────────────────────
+// Wraps `scripts/test-off-script-handlers.js` so it can be triggered from the
+// admin panel (or any HTTP client) in addition to the CLI. Uses the same
+// background-job pattern as enrollment so the proxy can't time it out.
+const _offScriptJobs = new Map(); // jobId → { status, result, error, expiresAt }
+
+app.post('/admin/test-off-script', requireAdmin, (req, res) => {
+  // Accept the same filter knobs the CLI honors so the panel can run
+  // either the full 12-case suite or a narrow re-check.
+  // `mode` ('direct' | 'via-server') lets the panel force the
+  // authoritative server-pipeline run without requiring the operator to
+  // set OFF_VIA_SERVER in the workflow environment first.
+  const { variant, handler, batch, mode } = req.body || {};
+
+  // Strict input validation — silently ignoring an invalid filter would
+  // mask operator typos as a 0-case successful run.
+  const VALID_VARIANTS = ['A', 'B', 'C', 'D'];
+  const VALID_HANDLERS = ['CURIOSITY', 'IDENTITY', 'SOLUTION-SEEKING'];
+  const VALID_MODES = ['direct', 'via-server'];
+  const requestedMode = mode ? String(mode).toLowerCase() : null;
+  if (requestedMode && !VALID_MODES.includes(requestedMode)) {
+    return res.status(400).json({ ok: false, error: `Invalid mode "${mode}". Expected one of: ${VALID_MODES.join(', ')}.` });
+  }
+  if (variant !== undefined && variant !== null && variant !== '' && !VALID_VARIANTS.includes(String(variant).toUpperCase())) {
+    return res.status(400).json({ ok: false, error: `Invalid variant "${variant}". Expected one of: ${VALID_VARIANTS.join(', ')}.` });
+  }
+  if (handler !== undefined && handler !== null && handler !== '' && !VALID_HANDLERS.includes(String(handler).toUpperCase())) {
+    return res.status(400).json({ ok: false, error: `Invalid handler "${handler}". Expected one of: ${VALID_HANDLERS.join(', ')}.` });
+  }
+  let batchNum = null;
+  if (batch !== undefined && batch !== null && batch !== '') {
+    batchNum = Number(batch);
+    if (!Number.isInteger(batchNum) || batchNum < 1 || batchNum > 12) {
+      return res.status(400).json({ ok: false, error: `Invalid batch "${batch}". Expected integer 1–12.` });
+    }
+  }
+
+  for (const [id, job] of _offScriptJobs) if (job.expiresAt < Date.now()) _offScriptJobs.delete(id);
+
+  const jobId = `os-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  // Per-job report basename so concurrent harness runs never race each
+  // other on the "latest file in sim-out" lookup. Must match the script's
+  // OFF_REPORT_BASENAME validation regex.
+  const reportBasename = `off-script-job-${jobId}`;
+
+  // Default mode = whatever env already says (so the workflow can pin
+  // it), falling back to direct. Explicit body `mode` overrides.
+  const envSaysViaServer = process.env.OFF_VIA_SERVER === '1';
+  const effectiveMode = requestedMode || (envSaysViaServer ? 'via-server' : 'direct');
+
+  // Stash mode on the job record so polling reflects it immediately,
+  // not just after completion.
+  _offScriptJobs.set(jobId, { status: 'running', mode: effectiveMode, result: null, error: null, expiresAt: Date.now() + 10 * 60 * 1000 });
+
+  setImmediate(() => {
+    const { spawn } = require('child_process');
+    const env = { ...process.env };
+    if (variant) env.OFF_VARIANT = String(variant).toUpperCase();
+    if (handler) env.OFF_HANDLER = String(handler).toUpperCase();
+    if (batchNum) env.OFF_BATCH = String(batchNum);
+    env.OFF_REPORT_BASENAME = reportBasename;
+
+    if (effectiveMode === 'via-server') {
+      // The harness needs to reach this very server. Default to the
+      // local listener; let an explicit OFF_SERVER_URL override (e.g.
+      // hitting a different deployment).
+      env.OFF_VIA_SERVER = '1';
+      if (!env.OFF_SERVER_URL) {
+        env.OFF_SERVER_URL = `http://localhost:${process.env.PORT || 5000}`;
+      }
+      // ADMIN_KEY is already present in process.env (we just authed
+      // this request with it), so the harness can call back in.
+    } else {
+      // Force direct even if OFF_VIA_SERVER=1 leaked in from the parent
+      // env, so 'direct' from the request really means direct.
+      delete env.OFF_VIA_SERVER;
+    }
+
+    const child = spawn(process.execPath, [path.join(__dirname, 'scripts', 'test-off-script-handlers.js')], { env });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', d => { stdout += d.toString(); });
+    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.on('close', (code) => {
+      // Read the report the script just wrote for THIS job (per-job basename
+      // pinned via env above), so concurrent jobs can't return each other's
+      // results.
+      const fs = require('fs');
+      let reportMd = null, reportJson = null;
+      try {
+        const outDir = path.join(__dirname, '.local', 'sim-out');
+        const mdPath = path.join(outDir, `${reportBasename}.md`);
+        const jsonPath = path.join(outDir, `${reportBasename}.json`);
+        if (fs.existsSync(mdPath)) reportMd = fs.readFileSync(mdPath, 'utf8');
+        if (fs.existsSync(jsonPath)) reportJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      } catch (err) {
+        stderr += `\n[harness] failed to read report: ${err.message}`;
+      }
+      _offScriptJobs.set(jobId, {
+        status: code === 0 ? 'done' : 'failed',
+        result: { exitCode: code, stdout, stderr, reportMd, reportJson, reportBasename, mode: effectiveMode },
+        error: code === 0 ? null : `exit code ${code}`,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      });
+    });
+    child.on('error', (err) => {
+      _offScriptJobs.set(jobId, {
+        status: 'error',
+        result: { mode: effectiveMode },
+        error: err.message,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      });
+    });
+  });
+
+  res.json({ ok: true, jobId, status: 'running', mode: effectiveMode });
+});
+
+app.get('/admin/test-off-script/:jobId', requireAdmin, (req, res) => {
+  const job = _offScriptJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: 'Job not found or expired.' });
+  // `mode` is echoed in every response (running, error, done, failed) so the
+  // operator/UI can confirm direct vs via-server without waiting for completion.
+  if (job.status === 'running') return res.json({ ok: true, status: 'running', mode: job.mode });
+  if (job.status === 'error')   return res.json({ ok: false, status: 'error', mode: job.mode, error: job.error });
+  // status === 'done' or 'failed' (non-zero exit): include the report so the
+  // caller (admin panel curl, etc.) gets a full picture in one response.
+  res.json({ ok: job.status === 'done', status: job.status, mode: job.mode, error: job.error, ...job.result });
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "prompts:push": "node scripts/prompts-sync-file-to-db.js"
+    "prompts:push": "node scripts/prompts-sync-file-to-db.js",
+    "test:off-script": "node scripts/test-off-script-handlers.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
