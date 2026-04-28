@@ -1380,18 +1380,59 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
     // 1% where the model drifts. Strip the marker, keep the conversation
     // active, and DON'T pause the AI so the next prospect message gets a
     // normal reply (model will redirect via the in-prompt pivot string).
+    //
+    // CARVE-OUT (added Apr 28, Carson regression): when the prospect EXPLICITLY
+    // asks for the video or for a human, the qualification gate is bypassed.
+    // The prompt's WANT-VIDEO-NOW / WANT-HUMAN handlers in OFF-SCRIPT REPLIES
+    // tell Claude to fire [BOOKED] in those cases without research/scan; this
+    // server-side belt-and-suspenders matches that contract by inspecting the
+    // most recent inbound text against a generous handoff-signal regex list.
+    // If the inbound matches, [BOOKED] is allowed through (booked=true,
+    // paused_reason='verbal-commit' as normal). Sid takes the handoff from
+    // there. The regex list is intentionally loose — false positives just mean
+    // a slightly eager handoff, which is the entire point of these handlers.
     const lacksQualification = !fresh?.researchData || !fresh?.scanResults;
+    const HANDOFF_REGEXES = [
+      // WANT-VIDEO-NOW patterns
+      /\bjust\s+(?:send|give)\s+(?:me\s+)?(?:the\s+)?(?:link|video|meeting|training|program)\b/i,
+      /\b(?:send|shoot|fire)\s+(?:me\s+|it\s+)?(?:the\s+)?(?:link|video|over|it\s+over|the\s+meeting|the\s+program|it\s+now)\b/i,
+      /\bshow\s+me\s+(?:it|the\s+video|the\s+link)\b/i,
+      /\bgive\s+me\s+(?:the\s+)?(?:video|link|meeting|training|program)\b/i,
+      /\bi\s+(?:want|wanna)\s+(?:to\s+)?(?:watch|see)\s+(?:it|the\s+video)\b/i,
+      /\bfire\s+it\s+over\b/i,
+      // WANT-HUMAN patterns. NOTE: "stop the bot/chatbot" is intentionally
+      // EXCLUDED — it collides with the TCPA opt-out keyword \bstop\b in
+      // optouts.js, which fires before AI generation and is the safer
+      // (TCPA-compliant) interpretation. Same for "are you a bot?" — that
+      // is a curiosity question handled by the OBJECTIONS "Is this a bot?"
+      // deflection, NOT a rejection. Only kill/no-more/I-don't-want-AI
+      // patterns route here as explicit rejection-of-bot signals.
+      /\btalk\s+to\s+(?:someone|a\s+(?:real\s+)?person|a\s+human|sid|the\s+founder)\b/i,
+      /\bspeak\s+(?:to|with)\s+(?:someone|a\s+(?:real\s+)?person|a\s+human|sid|the\s+founder)\b/i,
+      /\bhave\s+(?:someone|sid)\s+(?:call|reach\s+out|contact)\s+me\b/i,
+      /\b(?:i\s+)?(?:don'?t|do\s+not)\s+want\s+(?:to\s+talk\s+to\s+)?(?:an?\s+)?ai\b/i,
+      /\b(?:i\s+)?(?:don'?t|do\s+not)\s+want\s+(?:to\s+talk\s+to\s+)?(?:an?\s+)?(?:chat\s?)?bot\b/i,
+      /\bchat\s?bot\b/i,
+      /\bkill\s+(?:the\s+)?(?:chat\s?)?bot\b/i,
+      /\bno\s+more\s+(?:chat\s?)?bot\b/i,
+      /\bgive\s+me\s+a\s+call\b/i,
+    ];
+    const inboundForHandoff = (typeof messageBody === 'string') ? messageBody : '';
+    const handoffMatch = HANDOFF_REGEXES.find(r => r.test(inboundForHandoff));
     if (isHallucination) {
       console.warn(`[AiGen] [BOOKED] hallucination suppressed for ${contactId} (declined-context). Reply discarded: "${reply.slice(0, 80)}"`);
       conversations.update(contactId, { booked: true, pausedReason: 'declined' });
       reply = '';
-    } else if (lacksQualification) {
+    } else if (lacksQualification && !handoffMatch) {
       console.warn(`[AiGen] [BOOKED] suppressed for ${contactId} (premature: researchData=${!!fresh?.researchData}, scanResults=${!!fresh?.scanResults}). Reply kept, AI not paused. Reply: "${reply.slice(0, 80)}"`);
       // Do NOT pause. Do NOT mark booked. Reply text stays so the prospect
       // gets some response, but the conversation continues so the AI can
       // properly qualify on the next turn. (The prompt's pivot string should
       // be in the reply already; if not, at least we preserved the message.)
     } else {
+      if (lacksQualification && handoffMatch) {
+        console.log(`[AiGen] [BOOKED] allowed via handoff carve-out for ${contactId} (matched: ${handoffMatch.source}). Inbound: "${inboundForHandoff.slice(0, 80)}"`);
+      }
       conversations.update(contactId, { booked: true, pausedReason: 'verbal-commit' });
       console.log(`[AiGen] Contact ${contactId} agreed to book — AI paused (paused_reason=verbal-commit), awaiting GHL appointment confirmation`);
     }
