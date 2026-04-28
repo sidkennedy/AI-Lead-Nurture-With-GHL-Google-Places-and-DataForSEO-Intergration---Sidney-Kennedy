@@ -2647,6 +2647,9 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
                      C: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0 },
                      D: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0 } };
 
+    // Step funnel tracking: collect contacts per variant keyed by their currentStep
+    const stepRaw = { A: [], B: [], C: [], D: [] };
+
     // Track which lead forms are present in the data so the dashboard can
     // render filter chips dynamically (no hard-coded form list).
     const leadFormSet = new Set();
@@ -2668,7 +2671,92 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
       if (inbound >= 1) vc.repliedOnce++;
       if (inbound >= 4) vc.replied4++;
       if (bookedSet.has(c.contactId)) vc.booked++;
+      // Collect step data for funnel breakdown
+      const step = typeof c.currentStep === 'number' ? c.currentStep : null;
+      if (step !== null && step >= 1 && stepRaw[c.variant]) {
+        stepRaw[c.variant].push({
+          firstName:     c.firstName || 'Unknown',
+          lastMessageAt: Number(c.lastMessageAt) || 0,
+          step
+        });
+      }
     }
+
+    // ── Step description extractor ────────────────────────────────────────────
+    // Parses STEP N / STEP N (description) / STEP N — label lines from the
+    // variant prompt text. First match per step number wins (ignores sub-sections
+    // like "STEP 4 CALCULATION LOGIC" that share the same step number prefix).
+    function _extractStepDescs(promptKey) {
+      const txt = prompts.get(promptKey) || '';
+      const desc = {};
+      const re = /^STEP\s+(\d+)(.*?)$/gim;
+      let m;
+      while ((m = re.exec(txt)) !== null) {
+        const n = parseInt(m[1], 10);
+        if (desc[n]) continue;
+        let label = m[2].trim()
+          .replace(/^[\s\u2014\-:]+/, '')
+          .replace(/:+$/, '')
+          .trim();
+        if (label.startsWith('(') && label.includes(')')) {
+          label = label.slice(1, label.indexOf(')')).trim();
+        }
+        if (label.length > 80) label = label.slice(0, 77) + '...';
+        desc[n] = label;
+      }
+      return desc;
+    }
+
+    const variantPromptKeys = {
+      A: prompts.get('conversationPrompt.A') ? 'conversationPrompt.A' : 'conversationPrompt',
+      B: prompts.get('conversationPrompt.B') ? 'conversationPrompt.B' : 'conversationPrompt',
+      C: prompts.get('conversationPrompt.C') ? 'conversationPrompt.C' : 'conversationPrompt',
+      D: prompts.get('conversationPrompt.D') ? 'conversationPrompt.D' : 'conversationPrompt'
+    };
+    const stepDescs = {
+      A: _extractStepDescs(variantPromptKeys.A),
+      B: _extractStepDescs(variantPromptKeys.B),
+      C: _extractStepDescs(variantPromptKeys.C),
+      D: _extractStepDescs(variantPromptKeys.D)
+    };
+
+    // Max step across all variant prompts (floor at 7).
+    // Using prompt-defined max avoids phantom columns from outlier contacts that
+    // drifted past the highest defined step — those contacts still count toward
+    // the last defined step's funnel (step >= N catches them).
+    const maxStepFromPrompts = Math.max(0, ...Object.values(stepDescs).flatMap(d => Object.keys(d).map(Number)));
+    const maxStep = Math.max(maxStepFromPrompts, 7);
+
+    // Build stepData[variant][stepN] for each step 1..maxStep
+    function _buildStepData(variantKey, contacts, assigned) {
+      const descs = stepDescs[variantKey];
+      const result = {};
+      for (let n = 1; n <= maxStep; n++) {
+        const hasStep = Object.prototype.hasOwnProperty.call(descs, n);
+        if (!hasStep) { result[n] = null; continue; } // variant doesn't define this step → show —
+        const funnelContacts = contacts.filter(c => c.step >= n);
+        const atStep = contacts
+          .filter(c => c.step === n)
+          .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+        const overflow = atStep.length > 10 ? atStep.length - 10 : 0;
+        const funnelCount = funnelContacts.length;
+        result[n] = {
+          funnelCount,
+          funnelPct:    assigned > 0 && funnelCount > 0 ? Math.round((funnelCount / assigned) * 100) : null,
+          stepDesc:     descs[n] || '',
+          atStepNames:  atStep.slice(0, 10).map(c => c.firstName),
+          overflow
+        };
+      }
+      return result;
+    }
+
+    const stepDataByVariant = {
+      A: _buildStepData('A', stepRaw.A, counts.A.assigned),
+      B: _buildStepData('B', stepRaw.B, counts.B.assigned),
+      C: _buildStepData('C', stepRaw.C, counts.C.assigned),
+      D: _buildStepData('D', stepRaw.D, counts.D.assigned)
+    };
 
     const pct = (n, d) => d > 0 ? Math.round((n / d) * 100) : null;
 
@@ -2718,13 +2806,15 @@ app.get('/api/brain/variants', requireAdmin, (req, res) => {
         replied4Pct:      pct(vc.replied4,    vc.assigned),
         bookingRatePct:   pct(vc.booked,      vc.assigned),
         bookedRaw:        vc.booked,
-        pBest:            hasEnoughData ? Math.round((wins[v] / SAMPLES) * 100) : null
+        pBest:            hasEnoughData ? Math.round((wins[v] / SAMPLES) * 100) : null,
+        stepData:         stepDataByVariant[v]
       };
     });
 
     res.json({
       ok: true,
       variants,
+      maxStep,
       leadForms:        Array.from(leadFormSet).sort(),
       leadFormFilter
     });
@@ -4911,6 +5001,22 @@ async function loadBrain() {
             const ring = p >= 85 ? '#86efac' : p >= 70 ? '#fcd34d' : '#cbd5e1';
             return \`<span style="display:inline-block;padding:2px 9px;border-radius:999px;background:\${bg};color:\${fg};border:1px solid \${ring};font-weight:700;font-size:12px">\${p}%</span>\`;
           }
+          function vStep(sd, n) {
+            if (sd === null || sd === undefined) return '<span style="color:#c4c4c4">—</span>';
+            if (sd.funnelPct === null || sd.funnelPct === undefined) return '<span style="color:#d4d4d4;font-size:11px">—</span>';
+            const p = sd.funnelPct;
+            const col = p >= 60 ? '#22c55e' : p >= 30 ? '#f59e0b' : '#6b7280';
+            const names = (sd.atStepNames && sd.atStepNames.length > 0)
+              ? sd.atStepNames.join(', ') + (sd.overflow > 0 ? ' +' + sd.overflow + ' more' : '')
+              : 'No contacts here now';
+            const label = ('Step ' + n + (sd.stepDesc ? ': ' + sd.stepDesc : ''))
+              .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            const tip = label + '&#10;Here now: ' + names.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            return '<span style="font-weight:600;color:' + col + ';cursor:default" title="' + tip + '">' + p + '%</span>';
+          }
+          const ms = vData.maxStep || 7;
+          const stepThs = Array.from({length: ms}, (_, i) =>
+            '<th style="font-size:11px;white-space:nowrap;color:#64748b">S' + (i+1) + '</th>').join('');
           variantRows = \`
             <div style="margin-top:28px;border-top:1px solid rgba(203,213,225,.6);padding-top:20px">
               <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
@@ -4918,17 +5024,22 @@ async function loadBrain() {
               </div>
               <div class="table-wrap"><table class="perf-table">
                 <thead><tr>
-                  <th>Variant</th><th>Enabled</th><th>Contacts</th><th>Replied Once</th><th>4+ Replies</th><th>Booking Rate</th>
+                  <th>Variant</th><th>Enabled</th><th>Contacts</th><th>Replied Once</th>\${stepThs}<th>Booking Rate</th>
                   <th style="white-space:nowrap">P(Best)</th>
                 </tr></thead>
                 <tbody>\${vData.variants.map(v => {
                   const col = variantColors[v.variant] || '#aaa';
+                  const stepCells = Array.from({length: ms}, (_, i) => {
+                    const n = i + 1;
+                    const sd = v.stepData ? v.stepData[n] : null;
+                    return '<td style="text-align:center">' + vStep(sd, n) + '</td>';
+                  }).join('');
                   return \`<tr>
                     <td><span style="font-weight:700;color:\${col}">Variant \${v.variant}</span></td>
                     <td><span style="\${v.enabled ? 'color:#22c55e' : 'color:#555'};font-weight:600">\${v.enabled ? 'Yes' : 'No'}</span></td>
                     <td>\${v.contactsAssigned}</td>
                     <td>\${vPct(v.repliedOncePct)}</td>
-                    <td>\${vPct(v.replied4Pct)}</td>
+                    \${stepCells}
                     <td>\${vPct(v.bookingRatePct)}</td>
                     <td>\${vPBestPill(v.pBest)}</td>
                   </tr>\`;
