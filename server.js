@@ -43,6 +43,16 @@ const spend = require('./spend');
 const optouts = require('./optouts');
 const outboundLock = require('./outbound-lock');
 
+// Rapid-reply debounce — when a prospect sends two texts in quick succession
+// (e.g. a main reply followed by "lol" a couple seconds later), each triggers a
+// separate inbound webhook.  Without debouncing both webhooks fire the AI and two
+// replies go out.  Instead we delay the AI call briefly: if a SECOND inbound for the
+// same contact lands inside the window we cancel the first timer and restart it, so
+// only ONE AI call fires — but by then both messages are recorded in exchanges and
+// the AI sees the full turn and acknowledges everything they said.
+const REPLY_DEBOUNCE_MS = 3500;
+const _pendingAiReplies = new Map(); // contactId → { timer }
+
 // ─── Dev Mode ─────────────────────────────────────────────────────────────────
 // Set DEV_MODE=true in your local .env to disable the scheduler and GHL sends.
 // Production deployments should never set this variable.
@@ -1110,14 +1120,33 @@ async function handleInbound({ contactId, conversationId, messageBody, firstName
     return await handleRetryName(contactId, messageBody, fresh, resolvedConvId);
   }
 
-  // ── 4.6. Hand off to the AI generation pipeline ───────────────────────────────
-  await generateAndSendAiReply(contactId, resolvedConvId, {
-    fresh,
-    rawGhlMessages,
-    resolvedFirstName,
-    resolvedCity,
-    messageBody
-  });
+  // ── 4.6. Rapid-reply debounce → AI generation pipeline ───────────────────────
+  // Defer the AI call by REPLY_DEBOUNCE_MS.  If a second inbound for this contact
+  // arrives inside the window, the first timer is cancelled and a new one is set —
+  // so only ONE AI call fires.  Both messages are already stored in exchanges by
+  // tryClaimInbound, so generateAndSendAiReply sees the full turn (re-fetches fresh
+  // state on its own, so no need to pass stale opts).
+  {
+    const existing = _pendingAiReplies.get(contactId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      console.log(`[Webhook] Debounce — batching rapid reply for ${contactId}, resetting timer`);
+    }
+    const timer = setTimeout(async () => {
+      _pendingAiReplies.delete(contactId);
+      try {
+        await generateAndSendAiReply(contactId, resolvedConvId, {
+          resolvedFirstName,
+          resolvedCity
+          // Intentionally omit fresh & rawGhlMessages — re-fetched for latest state,
+          // which now includes all batched rapid-fire messages from this prospect.
+        });
+      } catch (err) {
+        console.error(`[Webhook] Debounced AI call failed for ${contactId}:`, err.message);
+      }
+    }, REPLY_DEBOUNCE_MS);
+    _pendingAiReplies.set(contactId, { timer });
+  }
 }
 
 // Signature of the "Not interested" rejection-handler outbound. Used by the
@@ -1294,11 +1323,28 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
       isHardCapViolation = true;
     }
 
-    const violation = isDuplicate ? 'duplicate' : (isHardCapViolation ? 'hard_cap' : null);
+    // Same-step re-ask guard: if the very last outbound was also [STEP:N] and we're
+    // about to emit [STEP:N] again, that means the AI re-asked after a prospect reply
+    // (the Mary Ellen case: political joke → AI re-sent step 2 verbatim). The existing
+    // hard-cap only fires on 3-in-a-row; this catches the 2-in-a-row re-ask. We nudge
+    // rather than silently drop — the nudge explicitly allows genuine one-time clarifiers
+    // (short, specific follow-up question NOT restating the scripted text) while blocking
+    // the verbatim re-ask pattern.
+    let isSameStepReask = false;
+    if (!isHardCapViolation && _newStepPre !== null && recentOutbounds.length > 0) {
+      const _lastStep = recentOutbounds[recentOutbounds.length - 1].step;
+      if (_lastStep !== null && _lastStep !== undefined && _lastStep === _newStepPre) {
+        isSameStepReask = true;
+      }
+    }
+
+    const violation = isDuplicate ? 'duplicate' : (isHardCapViolation ? 'hard_cap' : (isSameStepReask ? 'same_step_reask' : null));
     if (violation) {
       const fname = resolvedFirstName || fresh?.firstName || 'there';
       const nudge = violation === 'duplicate'
         ? `\n\n!! REGENERATION REQUIRED: your draft is identical to the last message you already sent. Do NOT repeat yourself verbatim. The prospect is being vague. Either ask a DIFFERENT concrete yes/no clarifying question, or send the polite exit ("No worries ${fname} — text me if anything changes.") followed by [DECLINED].`
+        : violation === 'same_step_reask'
+        ? `\n\n!! SAME-STEP RE-ASK DETECTED: your last outbound was [STEP:${_newStepPre}] and you are about to send [STEP:${_newStepPre}] again after a prospect reply. After any prospect reply you MUST do one of: (1) advance to [STEP:${_newStepPre + 1}] — if the prospect gave any reply, even a joke, deflection, or tangent, that reply COUNTS as answering and you advance; OR (2) send ONE short tight clarifying question (NOT the scripted question text verbatim) only if their reply was genuinely numerically or factually ambiguous; OR (3) send the polite exit ("No worries ${fname} — text me if anything changes.") followed by [DECLINED]. Humor, politics, tangents, and deflections all count as answered — acknowledge what they said specifically and warmly, then advance. Do NOT re-send the scripted step question.`
         : `\n\n!! REGENERATION REQUIRED: you have already sent [STEP:${_newStepPre}] in your two most recent outbound messages. The HARD CAP forbids three in a row. You MUST either advance to [STEP:${_newStepPre + 1}] OR send the polite exit ("No worries ${fname} — text me if anything changes.") followed by [DECLINED]. Do NOT emit [STEP:${_newStepPre}] again.`;
 
       console.warn(`[AiGen] Outbound rule violation (${violation}) for ${contactId} on variant ${contactVariant || 'none'} — retrying once with corrective nudge`);
