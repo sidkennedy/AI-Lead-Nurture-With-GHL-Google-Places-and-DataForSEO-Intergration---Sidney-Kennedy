@@ -50,8 +50,24 @@ console.log('DB host:', (process.env.PROD_DATABASE_URL || '').match(/@([^/]+)/)?
 
 ## ⚠️ AGENT: OTHER RECURRING TRAPS ⚠️
 
-### 1. Variants A, B, C, D are intentionally distinct — never "reconcile" them
-The four conversation prompt variants have deliberately different voices, step counts, and booking-close lines (A neutral with 9 steps, B punchy with 10 steps, C urgent with 8 steps, D bold with 8 steps). They are **not** A/B/C/D copies of one script — they are four different scripts being tested against each other. If you query the prompts and see them looking identical, byte-equal, or near-equal in length, **you are reading the wrong source** (almost certainly the wrong DB — see the section above). Do not propose unifying them, deduplicating them, or suggesting one is "out of sync" with the others. Confirm distinctness against the prod DB before saying anything about variant content.
+### 1. Scripted variants (A/B/C/D/F/…) are intentionally distinct — never "reconcile" them
+The scripted conversation prompt variants have deliberately different voices, step counts, and booking-close lines. They are **not** copies of one script — they are independent scripts being tested against each other. If you query the prompts and see them looking identical, byte-equal, or near-equal in length, **you are reading the wrong source** (almost certainly the wrong DB — see the section above). Do not propose unifying them, deduplicating them, or suggesting one is "out of sync" with the others. Confirm distinctness against the prod DB before saying anything about variant content.
+
+**How to add a new scripted variant (e.g. "G"):**
+1. Open `config.js` and append `'G'` to `SCRIPTED_VARIANTS: ['A', 'B', 'C', 'D', 'F', ...]`.
+2. Add `conversationPromptG: \`...\`` to `config.js` with the default prompt text (falls back to `conversationPrompt` base if absent).
+3. Restart. Everything else auto-wires: DEFAULTS keys, enabled flags (new letters default `false`), stats counts, Bayesian Monte Carlo, step funnel, variant keys DB seeding, prompt editor tabs.
+4. Enable the new variant in the admin prompt editor when ready to go live.
+
+**Variant E is NOT in SCRIPTED_VARIANTS.** It uses a separate modular/branching architecture (6 sub-prompts assembled at runtime) and must always be handled separately.
+
+**Current variants as of 2026-04-30:**
+- A — soft curiosity opener + base script (oldest, always-on)
+- B — "this'll piss you off" opener
+- C — competitor-threat script
+- D — "probably won't work for your practice" opener + C competitive script
+- F — "D V2": D opener + C competitive script + prominent IMPATIENCE OFF-RAMP rule (starts disabled)
+- E — Branching Adaptive Sales Brain / Sidney persona (separate architecture)
 
 ### 2. The admin dashboard is one giant template literal in `server.js` — quote-nesting is a real footgun
 The entire admin UI HTML+CSS+JS is rendered by huge backtick template literals inside server.js (most of them under `/admin` and `/api/admin/*` routes). Inside those backticks live single-quoted JS strings, which sometimes contain English contractions. Words like **hasn't, can't, won't, doesn't, you're, it's, I'll, we're** will silently break the page if they sit unescaped inside a single-quoted string inside a backtick template — the prod admin "Loading…" bug at server.js:3777 was caused by exactly this (`'hasn't'` inside a single-quoted string inside a backtick template). Two safe options when editing admin HTML/JS strings:

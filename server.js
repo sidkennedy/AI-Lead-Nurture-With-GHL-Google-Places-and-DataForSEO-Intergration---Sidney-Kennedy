@@ -2715,7 +2715,7 @@ app.post('/api/admin/backfill-variants', requireAdmin, (req, res) => {
   // Respect currently-enabled variants so backfill honours the same pool
   // as new-contact assignment (pickVariant uses getEnabledVariants() too).
   const enabledV = prompts.getEnabledVariants();
-  const backfillVariants = enabledV.length > 0 ? enabledV : ['A', 'B', 'C', 'D', 'E'];
+  const backfillVariants = enabledV.length > 0 ? enabledV : [...config.SCRIPTED_VARIANTS, 'E'];
   // Count current assignments to continue the round-robin fairly
   const counts = Object.fromEntries(backfillVariants.map(v => [v, 0]));
   for (const c of Object.values(all)) {
@@ -2784,7 +2784,8 @@ app.post('/api/admin/reset-variants', requireAdmin, async (req, res) => {
 
 app.post('/admin/variants/:variant/enabled', requireAdmin, (req, res) => {
   const { variant } = req.params;
-  if (!['A', 'B', 'C', 'D', 'E'].includes(variant)) return res.status(400).json({ error: 'Invalid variant. Must be A, B, C, D, or E.' });
+  const allVariants = [...config.SCRIPTED_VARIANTS, 'E'];
+  if (!allVariants.includes(variant)) return res.status(400).json({ error: `Invalid variant. Must be one of: ${allVariants.join(', ')}.` });
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled field must be a boolean.' });
   try {
@@ -2808,14 +2809,11 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
     const days = parseInt(req.query.days, 10) || null;
     const cutoff = days ? Date.now() - days * 86400000 : null;
 
-    const counts = { A: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 },
-                     B: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 },
-                     C: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 },
-                     D: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 },
-                     E: { assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 } };
+    const _emptyCount = () => ({ assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 });
+    const counts = Object.fromEntries([...config.SCRIPTED_VARIANTS, 'E'].map(v => [v, _emptyCount()]));
 
     // Step funnel tracking: collect contacts per variant keyed by their currentStep
-    const stepRaw = { A: [], B: [], C: [], D: [], E: [] };
+    const stepRaw = Object.fromEntries([...config.SCRIPTED_VARIANTS, 'E'].map(v => [v, []]));
 
     // Track which lead forms are present in the data so the dashboard can
     // render filter chips dynamically (no hard-coded form list).
@@ -2880,12 +2878,9 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
       return desc;
     }
 
-    const variantPromptKeys = {
-      A: prompts.get('conversationPrompt.A') ? 'conversationPrompt.A' : 'conversationPrompt',
-      B: prompts.get('conversationPrompt.B') ? 'conversationPrompt.B' : 'conversationPrompt',
-      C: prompts.get('conversationPrompt.C') ? 'conversationPrompt.C' : 'conversationPrompt',
-      D: prompts.get('conversationPrompt.D') ? 'conversationPrompt.D' : 'conversationPrompt'
-    };
+    const variantPromptKeys = Object.fromEntries(
+      config.SCRIPTED_VARIANTS.map(v => [v, prompts.get(`conversationPrompt.${v}`) ? `conversationPrompt.${v}` : 'conversationPrompt'])
+    );
 
     // Variant E uses modular sub-prompts. Concatenate all parts for step
     // description extraction so the funnel can label steps 1-3 (opening)
@@ -2912,10 +2907,7 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
       .map(k => prompts.get(k) || '').join('\n\n');
 
     const stepDescs = {
-      A: _extractStepDescs(variantPromptKeys.A),
-      B: _extractStepDescs(variantPromptKeys.B),
-      C: _extractStepDescs(variantPromptKeys.C),
-      D: _extractStepDescs(variantPromptKeys.D),
+      ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _extractStepDescs(variantPromptKeys[v])])),
       E: _extractStepDescsFromText(variantECombinedText)
     };
 
@@ -2949,10 +2941,7 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
     }
 
     const stepDataByVariant = {
-      A: _buildStepData('A', stepRaw.A, counts.A.assigned),
-      B: _buildStepData('B', stepRaw.B, counts.B.assigned),
-      C: _buildStepData('C', stepRaw.C, counts.C.assigned),
-      D: _buildStepData('D', stepRaw.D, counts.D.assigned),
+      ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _buildStepData(v, stepRaw[v], counts[v].assigned)])),
       E: _buildStepData('E', stepRaw.E, counts.E.assigned)
     };
 
@@ -2976,11 +2965,11 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
       return x / (x + y);
     }
 
-    const ALL_VARIANTS = ['A', 'B', 'C', 'D', 'E'];
+    const ALL_VARIANTS = [...config.SCRIPTED_VARIANTS, 'E'];
     const MIN_CONTACTS_FOR_PBEST = 3; // suppress P(Best) when sample is too small to mean anything
     const SAMPLES = 50000;
     const activeVariants = ALL_VARIANTS.filter(v => counts[v].assigned >= MIN_CONTACTS_FOR_PBEST);
-    const wins = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+    const wins = Object.fromEntries(ALL_VARIANTS.map(v => [v, 0]));
 
     if (activeVariants.length >= 2) {
       for (let i = 0; i < SAMPLES; i++) {
@@ -3370,7 +3359,8 @@ function _normalizePlaygroundVariant(variant, customPrompt) {
     return { variant: 'CUSTOM', customPrompt: trimmedCustom };
   }
   if (v === 'CUSTOM') return { error: 'customPrompt is required when variant is CUSTOM' };
-  if (!['A', 'B', 'C', 'D', 'E'].includes(v)) return { error: 'variant must be A, B, C, D, E, or CUSTOM' };
+  const _validPlaygroundVariants = [...config.SCRIPTED_VARIANTS, 'E'];
+  if (!_validPlaygroundVariants.includes(v)) return { error: `variant must be one of: ${_validPlaygroundVariants.join(', ')}, or CUSTOM` };
   return { variant: v };
 }
 
@@ -3791,7 +3781,7 @@ app.post('/admin/test-off-script', requireAdmin, (req, res) => {
 
   // Strict input validation — silently ignoring an invalid filter would
   // mask operator typos as a 0-case successful run.
-  const VALID_VARIANTS = ['A', 'B', 'C', 'D'];
+  const VALID_VARIANTS = config.SCRIPTED_VARIANTS;
   const VALID_HANDLERS = ['CURIOSITY', 'IDENTITY', 'SOLUTION-SEEKING'];
   const VALID_MODES = ['direct', 'via-server'];
   const requestedMode = mode ? String(mode).toLowerCase() : null;
@@ -4017,10 +4007,10 @@ app.listen(PORT, () => {
   prompts.syncFromDb(_promptsPool).then(async () => {
     // Seed any variant prompt keys that aren't in the DB yet (ensures DB is
     // always the full source of truth from day one, no lazy-init surprises).
-    const variantKeys = [
-      'conversationPrompt.A', 'conversationPrompt.B', 'conversationPrompt.C', 'conversationPrompt.D',
-      'conversationPrompt.A.enabled', 'conversationPrompt.B.enabled', 'conversationPrompt.C.enabled', 'conversationPrompt.D.enabled'
-    ];
+    const variantKeys = config.SCRIPTED_VARIANTS.flatMap(v => [
+      `conversationPrompt.${v}`,
+      `conversationPrompt.${v}.enabled`
+    ]);
     for (const key of variantKeys) {
       const val = prompts.get(key);
       if (val) {
@@ -5443,8 +5433,8 @@ function buildPromptEditorPage(adminKey, promptsList) {
     sectionLabel: p.sectionLabel || null
   })));
 
-  // Build variant data: text + enabled flag for A/B/C/D
-  const variantsJson = JSON.stringify(['A', 'B', 'C', 'D'].map(v => ({
+  // Build variant data: text + enabled flag for all scripted variants
+  const variantsJson = JSON.stringify(config.SCRIPTED_VARIANTS.map(v => ({
     variant: v,
     text: prompts.get(`conversationPrompt.${v}`) || prompts.get('conversationPrompt'),
     enabled: prompts.get(`conversationPrompt.${v}.enabled`) === 'true'
@@ -5462,8 +5452,9 @@ function buildPromptEditorPage(adminKey, promptsList) {
   ].map(t => ({ ...t, current: prompts.get(t.key) || '' })));
   const variantEVslUrl = prompts.get('conversationPrompt.E.vslUrl') || '';
 
-  // Base conversation script — used as the underlying template for A/B/C/D
-  const baseConvPrompt = { name: 'conversationPrompt', label: 'Base Discovery Script (A/B/C/D Template)', description: 'The underlying script all four variants started from. Edit individual variants in the A/B/C/D section above — edits here are not applied to variants that already have their own saved copy.', current: prompts.get('conversationPrompt') || '', isModified: (prompts.listAll().find(p => p.name === 'conversationPrompt') || {}).isModified || false };
+  // Base conversation script — used as the underlying template for all scripted variants
+  const _variantLetters = config.SCRIPTED_VARIANTS.join('/');
+  const baseConvPrompt = { name: 'conversationPrompt', label: `Base Discovery Script (${_variantLetters} Template)`, description: `The underlying script all scripted variants started from. Edit individual variants in the ${_variantLetters} section above — edits here are not applied to variants that already have their own saved copy.`, current: prompts.get('conversationPrompt') || '', isModified: (prompts.listAll().find(p => p.name === 'conversationPrompt') || {}).isModified || false };
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -5648,7 +5639,7 @@ function renderVariantSection() {
   placeholder.id = 'variant-section';
   wrapper.appendChild(placeholder);
   const container = document.getElementById('variant-section');
-  const tabsHtml = ['A','B','C','D'].map(v =>
+  const tabsHtml = VARIANTS.map(vd => vd.variant).map(v =>
     \`<button class="variant-tab\${v===_activeTab?' active':''}" onclick="setTab('\${v}')">Variant \${v}</button>\`
   ).join('');
 

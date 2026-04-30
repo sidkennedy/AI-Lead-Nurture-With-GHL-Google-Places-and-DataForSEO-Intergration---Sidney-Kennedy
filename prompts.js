@@ -124,20 +124,25 @@ const PROMPT_META = [
 ];
 
 // ─── Hardcoded Defaults ───────────────────────────────────────────────────────
+// Scripted variant prompt content keyed by letter — used to seed DEFAULTS below.
+// When a new letter is added to config.SCRIPTED_VARIANTS, add its default prompt
+// text here as config.conversationPrompt<Letter>.  Falls back to the base script.
+const VARIANT_PROMPT_DEFAULTS = {};
+for (const v of config.SCRIPTED_VARIANTS) {
+  const customKey = `conversationPrompt${v}`;
+  VARIANT_PROMPT_DEFAULTS[v] = config[customKey] || config.conversationPrompt;
+}
 
 const DEFAULTS = {
   conversationPrompt: config.conversationPrompt,
-  // A/B/C variant scripts — each starts as a copy of the base script.
-  // Edit them independently in the Variant A/B/C tabs of the prompt editor.
-  'conversationPrompt.A': config.conversationPrompt,
-  'conversationPrompt.B': config.conversationPrompt,
-  'conversationPrompt.C': config.conversationPrompt,
-  'conversationPrompt.D': config.conversationPrompt,
-  // Enabled flags for each variant ('true' / 'false')
-  'conversationPrompt.A.enabled': 'true',
-  'conversationPrompt.B.enabled': 'true',
-  'conversationPrompt.C.enabled': 'true',
-  'conversationPrompt.D.enabled': 'false',
+  // Scripted variant scripts — each seeded from VARIANT_PROMPT_DEFAULTS above.
+  // Edit them independently in the A/B/C/D/F tabs of the prompt editor.
+  ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [`conversationPrompt.${v}`, VARIANT_PROMPT_DEFAULTS[v]])),
+  // Enabled flags — A/B/C default on, D/F and any future additions default off.
+  ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [
+    `conversationPrompt.${v}.enabled`,
+    ['A', 'B', 'C'].includes(v) ? 'true' : 'false'
+  ])),
   // Variant E — Branching Adaptive Sales Brain (Sidney persona)
   // Composed at runtime from shared + opening/branchA/B/C/D based on currentStep.
   'conversationPrompt.E.enabled': 'true',
@@ -539,12 +544,13 @@ function reset(name) {
  * Return the list of currently-enabled variants (['A'], ['A','B'], etc.)
  */
 function getEnabledVariants() {
-  return ['A', 'B', 'C', 'D', 'E'].filter(v => get(`conversationPrompt.${v}.enabled`) === 'true');
+  const all = [...config.SCRIPTED_VARIANTS, 'E'];
+  return all.filter(v => get(`conversationPrompt.${v}.enabled`) === 'true');
 }
 
 /**
  * Set enabled state for a specific variant.
- * @param {string} variant — 'A', 'B', 'C', 'D', or 'E'
+ * @param {string} variant — any letter in SCRIPTED_VARIANTS, or 'E'
  * @param {boolean} enabled
  */
 function setVariantEnabled(variant, enabled) {
@@ -564,7 +570,7 @@ function pickVariant(allContacts) {
   const enabled = getEnabledVariants();
   if (enabled.length === 0) return null;
   if (enabled.length === 1) return enabled[0];
-  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+  const counts = Object.fromEntries([...config.SCRIPTED_VARIANTS, 'E'].map(v => [v, 0]));
   for (const c of Object.values(allContacts)) {
     if (c.variant && counts[c.variant] !== undefined) counts[c.variant]++;
   }
