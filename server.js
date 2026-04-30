@@ -6221,6 +6221,8 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
 .vpill.active.A{background:linear-gradient(180deg,#edf2ff,#e0e7ff);color:#374151;border-color:#93c5fd}
 .vpill.active.B{background:linear-gradient(180deg,#fff7ed,#ffedd5);color:#92400e;border-color:#fdba74}
 .vpill.active.C{background:linear-gradient(180deg,#ecfdf5,#d1fae5);color:#065f46;border-color:#6ee7b7}
+.vpill.active.D{background:linear-gradient(180deg,#fef2f2,#fee2e2);color:#991b1b;border-color:#fca5a5}
+.vpill.active.E{background:linear-gradient(180deg,#fdf4ff,#fae8ff);color:#6b21a8;border-color:#d8b4fe}
 .vpill.active.CUSTOM{background:linear-gradient(180deg,#f5f3ff,#ede9fe);color:#5b21b6;border-color:#c4b5fd}
 .vpill.scan.active.SCAN-REAL{background:linear-gradient(180deg,#ecfeff,#cffafe);color:#0e7490;border-color:#67e8f9}
 .vpill.scan.active.SCAN-STUB{background:linear-gradient(180deg,#fef9c3,#fef08a);color:#854d0e;border-color:#fde047}
@@ -6292,6 +6294,8 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
           <button class="vpill A active" data-v="A" onclick="pickVariant('A')">A</button>
           <button class="vpill B" data-v="B" onclick="pickVariant('B')">B</button>
           <button class="vpill C" data-v="C" onclick="pickVariant('C')">C</button>
+          <button class="vpill D" data-v="D" onclick="pickVariant('D')">D</button>
+          <button class="vpill E" data-v="E" onclick="pickVariant('E')">E</button>
           <button class="vpill CUSTOM" data-v="CUSTOM" onclick="pickVariant('CUSTOM')">Custom</button>
         </div>
       </div>
