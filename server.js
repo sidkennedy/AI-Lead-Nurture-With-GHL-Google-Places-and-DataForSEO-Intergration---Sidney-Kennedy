@@ -544,13 +544,26 @@ async function notifySid(text) {
 // ─── Variant E Prompt Builder ──────────────────────────────────────────────────
 // Steps 0-9: shared + opening + all four branches (routing turn needs exact copy).
 // Steps 10+: shared + active branch only.
-function buildVariantESystemPrompt(currentStep) {
+//
+// Branch lock: once a contact has entered a branch (first step >= 10 marker
+// detected), the branch letter is stamped onto the contact as `variantEBranch`
+// and passed in here. When set, branchLock takes precedence over currentStep
+// for branch selection. This guards against an out-of-sequence step marker
+// (retry, hallucination, AI emitting [STEP:29] after [STEP:30]) flipping the
+// active branch script mid-conversation, which would otherwise feed the AI
+// the wrong script copy on the next inbound.
+function buildVariantESystemPrompt(currentStep, branchLock) {
   const shared  = prompts.get('conversationPrompt.E.shared')  || '';
   const opening = prompts.get('conversationPrompt.E.opening') || '';
   const branchA = prompts.get('conversationPrompt.E.branchA') || '';
   const branchB = prompts.get('conversationPrompt.E.branchB') || '';
   const branchC = prompts.get('conversationPrompt.E.branchC') || '';
   const branchD = prompts.get('conversationPrompt.E.branchD') || '';
+
+  if (branchLock === 'A') return [shared, branchA].filter(Boolean).join('\n\n');
+  if (branchLock === 'B') return [shared, branchB].filter(Boolean).join('\n\n');
+  if (branchLock === 'C') return [shared, branchC].filter(Boolean).join('\n\n');
+  if (branchLock === 'D') return [shared, branchD].filter(Boolean).join('\n\n');
 
   if (currentStep < 10) {
     return [shared, opening, branchA, branchB, branchC, branchD].filter(Boolean).join('\n\n');
@@ -563,6 +576,16 @@ function buildVariantESystemPrompt(currentStep) {
   } else {
     return [shared, branchD].filter(Boolean).join('\n\n');
   }
+}
+
+// Map a step number to its branch letter. Returns null for opening steps (< 10).
+// Kept in sync with buildVariantESystemPrompt's currentStep ranges above.
+function _variantEBranchForStep(step) {
+  if (typeof step !== 'number' || step < 10) return null;
+  if (step <= 29) return 'A';
+  if (step <= 49) return 'B';
+  if (step <= 69) return 'C';
+  return 'D';
 }
 
 async function generateAndSendOpener(contactId) {
@@ -1272,7 +1295,7 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
   const contactVariant = fresh?.variant || null;
   let systemContent;
   if (contactVariant === 'E') {
-    systemContent = buildVariantESystemPrompt(fresh?.currentStep ?? 0);
+    systemContent = buildVariantESystemPrompt(fresh?.currentStep ?? 0, fresh?.variantEBranch || null);
   } else {
     const variantPromptKey = contactVariant ? `conversationPrompt.${contactVariant}` : 'conversationPrompt';
     systemContent = prompts.get(variantPromptKey) || prompts.get('conversationPrompt');
@@ -1606,7 +1629,20 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
 
   // Update step
   if (detectedStep !== null) {
-    conversations.update(contactId, { currentStep: detectedStep });
+    const stepUpdates = { currentStep: detectedStep };
+    // Variant E branch lock: the first time a branch-range step marker
+    // (>= 10) is detected, stamp the branch letter onto the contact.
+    // From this point on buildVariantESystemPrompt() routes by the lock,
+    // not by currentStep, so an out-of-sequence step marker (retry,
+    // hallucination) cannot flip the active branch script mid-conversation.
+    if (contactVariant === 'E' && !fresh?.variantEBranch) {
+      const branch = _variantEBranchForStep(detectedStep);
+      if (branch) {
+        stepUpdates.variantEBranch = branch;
+        console.log(`[VariantE] Branch lock set to ${branch} for ${contactId} at step ${detectedStep}`);
+      }
+    }
+    conversations.update(contactId, stepUpdates);
   }
 
   // Persisted step: prefer Claude's marker, fall back to the contact's last
