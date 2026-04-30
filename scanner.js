@@ -23,7 +23,7 @@ function fuzzyMatch(haystack, needle) {
   return words.some(w => h.includes(w));
 }
 
-// Search one grid point via Google Places Nearby Search
+// Search one grid point via Google Places Nearby Search (fallback path)
 async function searchPoint(lat, lng, keyword, radiusMeters, apiKey) {
   const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json` +
     `?location=${lat},${lng}&radius=${radiusMeters}&keyword=${encodeURIComponent(keyword)}&key=${apiKey}`;
@@ -37,20 +37,140 @@ async function searchPoint(lat, lng, keyword, radiusMeters, apiKey) {
   }
 }
 
+// Search one grid point via DataForSEO Google Maps Live API (primary path)
+// Returns an array of { name, rating } objects matching the shape Google Places returns.
+async function searchPointDataForSEO(lat, lng, keyword) {
+  const login = process.env.DATAFORSEO_LOGIN;
+  const password = process.env.DATAFORSEO_PASSWORD;
+
+  if (!login || !password) {
+    throw new Error('DataForSEO credentials not configured');
+  }
+
+  const host = process.env.DATAFORSEO_SANDBOX === '1'
+    ? 'sandbox.dataforseo.com'
+    : 'api.dataforseo.com';
+
+  const credentials = Buffer.from(`${login}:${password}`).toString('base64');
+  // zoom 14z corresponds to ~2km view, matching pointRadiusMeters used for Google Places
+  const body = JSON.stringify([{
+    keyword,
+    location_coordinate: `${lat},${lng},14z`,
+    language_code: 'en',
+    depth: 20
+  }]);
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const res = await fetch(`https://${host}/v3/serp/google/maps/live/advanced`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${credentials}`,
+        'Content-Type': 'application/json'
+      },
+      body,
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      throw new Error(`DataForSEO returned HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    if (!data || data.status_code !== 20000) {
+      throw new Error(`DataForSEO top-level error ${data?.status_code}: ${data?.status_message}`);
+    }
+
+    const tasks = data.tasks;
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      throw new Error('DataForSEO returned no tasks');
+    }
+
+    const task = tasks[0];
+    if (!task || task.status_code !== 20000) {
+      throw new Error(`DataForSEO task error ${task?.status_code}: ${task?.status_message}`);
+    }
+
+    const result = task.result;
+    if (!Array.isArray(result) || result.length === 0) {
+      return [];
+    }
+
+    const items = result[0]?.items || [];
+
+    // Sort by rank_absolute so array index matches visual rank position
+    const sorted = items
+      .filter(item => typeof item.rank_absolute === 'number')
+      .sort((a, b) => a.rank_absolute - b.rank_absolute);
+
+    return sorted.slice(0, 20).map(item => ({
+      name: item.title || 'Unknown',
+      rating: item.rating?.value ?? null
+    }));
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+// Search one grid point — DataForSEO primary, Google Places fallback
+async function searchPointWithFallback(lat, lng, keyword, radiusMeters, apiKey) {
+  const dfsLogin = process.env.DATAFORSEO_LOGIN;
+  const dfsPassword = process.env.DATAFORSEO_PASSWORD;
+  const pointLabel = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+
+  if (dfsLogin && dfsPassword) {
+    try {
+      const results = await searchPointDataForSEO(lat, lng, keyword);
+      const host = process.env.DATAFORSEO_SANDBOX === '1' ? 'DataForSEO sandbox' : 'DataForSEO live';
+      console.log(`[Scanner] Point ${pointLabel} — ${host} (${results.length} results)`);
+      return results;
+    } catch (err) {
+      console.log(`[Scanner] Point ${pointLabel} — DataForSEO failed (${err.message}), falling back to Google Places`);
+      if (apiKey) {
+        const results = await searchPoint(lat, lng, keyword, radiusMeters, apiKey);
+        console.log(`[Scanner] Point ${pointLabel} — Google Places fallback (${results.length} results)`);
+        return results;
+      }
+      console.log(`[Scanner] Point ${pointLabel} — no Google Places key, returning empty`);
+      return [];
+    }
+  }
+
+  if (apiKey) {
+    const results = await searchPoint(lat, lng, keyword, radiusMeters, apiKey);
+    console.log(`[Scanner] Point ${pointLabel} — Google Places (${results.length} results)`);
+    return results;
+  }
+
+  return [];
+}
+
 async function startScan(sessionObj, practiceName, city, keyword) {
   const sessions = require('./sessions');
   const sessionId = sessionObj.sessionId;
 
   sessions.update(sessionId, { scanStatus: 'running' });
 
+  const dfsLogin = process.env.DATAFORSEO_LOGIN;
+  const dfsPassword = process.env.DATAFORSEO_PASSWORD;
+  const dfsConfigured = !!(dfsLogin && dfsPassword);
   const apiKey = process.env.GOOGLE_PLACES_KEY;
-  if (!apiKey) {
-    console.log('[Scanner] No Google Places key — using mock scan data');
+
+  if (!dfsConfigured && !apiKey) {
+    console.log('[Scanner] No DataForSEO or Google Places credentials — using mock scan data');
     await new Promise(r => setTimeout(r, 3000));
     const mockResults = generateMockResults(practiceName, sessionId);
     sessions.update(sessionId, { scanResults: mockResults, scanStatus: 'complete' });
     return;
   }
+
+  const primarySource = dfsConfigured
+    ? (process.env.DATAFORSEO_SANDBOX === '1' ? 'DataForSEO sandbox' : 'DataForSEO live')
+    : 'Google Places';
+  console.log(`[Scanner] Primary source: ${primarySource}${apiKey ? ' (Google Places fallback available)' : ''}`);
 
   // Wait up to 30s for lat/lng from research
   let lat, lng;
@@ -79,10 +199,10 @@ async function startScan(sessionObj, practiceName, city, keyword) {
   const pointRadiusMeters = 2000;
 
   try {
-    // Fire all 25 grid-point searches in parallel — completes in ~10-20s
+    // Fire all grid-point searches in parallel — DataForSEO primary, Google Places fallback per point
     const start = Date.now();
     const searchResults = await Promise.all(
-      grid.map(point => searchPoint(point.lat, point.lng, scanKeyword, pointRadiusMeters, apiKey))
+      grid.map(point => searchPointWithFallback(point.lat, point.lng, scanKeyword, pointRadiusMeters, apiKey))
     );
     console.log(`[Scanner] All ${grid.length} points returned in ${Date.now() - start}ms`);
 
