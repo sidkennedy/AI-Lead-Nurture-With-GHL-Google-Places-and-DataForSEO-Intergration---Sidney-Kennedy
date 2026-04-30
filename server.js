@@ -1450,10 +1450,23 @@ async function generateAndSendAiReply(contactId, resolvedConvId, opts = {}) {
           const confirmAddress = topResult.formatted_address || topResult.vicinity || '';
 
           if (contactVariant === 'E') {
-            // Variant E: silent scan — no confirmation SMS, Data Payload delivers results.
-            conversations.update(contactId, { practiceName: confirmName, practiceCity });
-            console.log(`[AiGen] Variant E: silent scan for ${contactId}: ${confirmName}`);
-            startResearchAndScan(contactId, confirmName, practiceStreet, practiceCity, topResult.place_id);
+            // Variant E: same confirmation flow as all other variants.
+            // After the prospect says "yes", handleConfirmationReply fires
+            // startResearchAndScan + scheduleAiResponseAfterResearch, which calls
+            // Claude again to generate the video link step cleanly.
+            // Defensive truncation: if the AI bundled [Link] into the same reply as
+            // [PRACTICE_DETECTED], strip everything from the second paragraph onwards
+            // so only the bridge sentence ("Got it, [name]... Checking now...") is sent.
+            // Claude re-generates the video step after confirmation.
+            if (reply.includes('[Link]')) {
+              reply = (reply.split(/\n\n/)[0] || reply).trim();
+              console.log(`[AiGen] Variant E: stripped video link from pre-confirmation reply for ${contactId}`);
+            }
+            conversations.update(contactId, {
+              confirmationPending: { placeId: topResult.place_id, name: confirmName, address: confirmAddress, city: practiceCity }
+            });
+            confirmationMsg = `Found ${confirmName} at ${confirmAddress} — is that the right one?`;
+            console.log(`[AiGen] Variant E: address confirmation queued for ${contactId}: ${confirmName}`);
           } else {
             conversations.update(contactId, {
               confirmationPending: { placeId: topResult.place_id, name: confirmName, address: confirmAddress, city: practiceCity }
