@@ -143,6 +143,8 @@ const DEFAULTS = {
     `conversationPrompt.${v}.enabled`,
     ['A', 'B', 'C'].includes(v) ? 'true' : 'false'
   ])),
+  // Per-variant free-text notes (admin-only, never sent to AI)
+  ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [`conversationPrompt.${v}.notes`, ''])),
   // Variant E — Branching Adaptive Sales Brain (Sidney persona)
   // Composed at runtime from shared + opening/branchA/B/C/D based on currentStep.
   'conversationPrompt.E.enabled': 'true',

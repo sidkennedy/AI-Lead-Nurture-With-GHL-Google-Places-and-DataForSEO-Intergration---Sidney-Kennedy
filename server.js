@@ -5483,7 +5483,8 @@ function buildPromptEditorPage(adminKey, promptsList) {
   const variantsJson = JSON.stringify(config.SCRIPTED_VARIANTS.map(v => ({
     variant: v,
     text: prompts.get(`conversationPrompt.${v}`) || prompts.get('conversationPrompt'),
-    enabled: prompts.get(`conversationPrompt.${v}.enabled`) === 'true'
+    enabled: prompts.get(`conversationPrompt.${v}.enabled`) === 'true',
+    notes: prompts.get(`conversationPrompt.${v}.notes`) || ''
   })));
 
   // Build Variant E data — all 6 editable prompt keys + VSL URL + enabled flag
@@ -5547,6 +5548,14 @@ textarea:focus{border-color:#2dd4bf;box-shadow:0 0 0 4px rgba(45,212,191,.12)}
 .status-ok{color:#10b981}
 .status-err{color:#ef4444}
 .char-count{font-size:12px;color:#94a3b8;margin-left:auto;font-weight:600}
+.vnotes-wrap{margin-top:10px;border-top:1px solid rgba(203,213,225,.5);padding-top:8px}
+.vnotes-toggle{background:none;border:none;cursor:pointer;font-size:12px;color:#94a3b8;font-weight:600;padding:0;display:flex;align-items:center;gap:4px;font-family:inherit}
+.vnotes-toggle:hover{color:#475569}
+.vnotes-body{margin-top:8px}
+.vnotes-body textarea{min-height:72px;font-size:12.5px;border-radius:8px;padding:10px 12px}
+.vnotes-save{padding:5px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid rgba(203,213,225,.9);background:#fff;color:#374151;font-family:inherit}
+.vnotes-save:hover{border-color:#94a3b8;color:#0f172a}
+.vnotes-status{font-size:12px;font-weight:600;color:#10b981}
 .page-header{text-align:center;max-width:820px;margin:0 auto 36px}
 .modal-overlay{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,0.45);display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(8px)}
 .modal-overlay.show{display:flex}
@@ -5711,6 +5720,19 @@ function renderVariantSection() {
           <span class="status" id="vstatus-\${vd.variant}"></span>
           <span class="char-count" id="vchars-\${vd.variant}">\${charCount} chars</span>
           \${vd.enabled?'':'<span style="font-size:12px;color:#555;margin-left:8px">Enable variant to edit</span>'}
+        </div>
+        <div class="vnotes-wrap">
+          <button class="vnotes-toggle" onclick="toggleVNotes('\${vd.variant}')" id="vnbtn-\${vd.variant}">
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" id="vnarrow-\${vd.variant}" style="transform:rotate(-90deg);transition:transform .15s"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+            Notes\${vd.notes ? ' <span style="color:#10b981;font-size:10px">&#9679;</span>' : ''}
+          </button>
+          <div class="vnotes-body" id="vnbody-\${vd.variant}" style="display:none">
+            <textarea id="vnta-\${vd.variant}" rows="4" placeholder="What is this variant testing? How is it performing? Any ideas for next iteration..." spellcheck="true">\${escapeHtml(vd.notes)}</textarea>
+            <div style="margin-top:6px;display:flex;align-items:center;gap:10px">
+              <button class="vnotes-save" onclick="saveVariantNotes('\${vd.variant}')">Save notes</button>
+              <span class="vnotes-status" id="vnstatus-\${vd.variant}"></span>
+            </div>
+          </div>
         </div>
       </div>
     \`;
@@ -5923,6 +5945,37 @@ async function saveVariant(v) {
     statusEl.textContent = '\u2717 Error: ' + err.message;
     statusEl.className = 'status status-err';
     showModal('Save Failed', 'Could not save Variant ' + v + ': ' + err.message, true);
+  }
+}
+
+function toggleVNotes(v) {
+  const body = document.getElementById('vnbody-' + v);
+  const arrow = document.getElementById('vnarrow-' + v);
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  arrow.style.transform = isOpen ? 'rotate(-90deg)' : 'rotate(0deg)';
+}
+
+async function saveVariantNotes(v) {
+  const ta = document.getElementById('vnta-' + v);
+  const statusEl = document.getElementById('vnstatus-' + v);
+  if (!ta) return;
+  const name = 'conversationPrompt.' + v + '.notes';
+  statusEl.textContent = 'Saving\u2026';
+  try {
+    const res = await fetch('/admin/prompts/' + encodeURIComponent(name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
+      body: JSON.stringify({ text: ta.value })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    statusEl.textContent = '\u2713 Saved';
+    const vd = VARIANTS.find(function(x) { return x.variant === v; });
+    if (vd) vd.notes = ta.value;
+    setTimeout(function() { statusEl.textContent = ''; }, 2500);
+  } catch(err) {
+    statusEl.textContent = '\u2717 ' + err.message;
   }
 }
 
