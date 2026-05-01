@@ -415,6 +415,11 @@ function recordInbound(contactId, body, step) {
 function recordReply(contactId) {
   const now = Date.now();
 
+  // Cross-channel attribution: credit the last unreplied outbound message for
+  // this contact regardless of channel (sms_scripted, followup-sms, or email).
+  // If the last thing we sent was an email and the prospect replies via SMS,
+  // the email gets the credit — and vice versa. "Last outbound wins" is the
+  // rule. No channel filter is applied intentionally.
   let lastOutboundIdx = -1;
   for (let i = _messagesCache.length - 1; i >= 0; i--) {
     const m = _messagesCache[i];
@@ -429,6 +434,9 @@ function recordReply(contactId) {
   const msg = _messagesCache[lastOutboundIdx];
   const withinWindow = now - msg.timestamp <= REPLY_WINDOW_MS;
   const updates = { repliedWithin48h: withinWindow, repliedAt: now };
+
+  const channel = msg.message_type || 'sms_scripted';
+  console.log(`[Brain] Crediting reply to ${channel} message (id=${msg.id}) for contact ${contactId} — within48h=${withinWindow}`);
 
   _messagesCache[lastOutboundIdx] = { ...msg, ...updates };
   _dbUpdateMessage(msg.id, updates);
