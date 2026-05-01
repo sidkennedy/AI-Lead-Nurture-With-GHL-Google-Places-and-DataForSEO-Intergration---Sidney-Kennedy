@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const config = require('./config');
 
 const MESSAGES_FILE = path.join(__dirname, 'data', 'messages.json');
 const PATTERNS_FILE = path.join(__dirname, 'data', 'winning-patterns.json');
@@ -668,7 +669,7 @@ function runAnalysis() {
     if (m.repliedWithin48h) vByVariant[v].replied++;
     if (m.booked)           vByVariant[v].booked++;
   }
-  winning.variantStats = ['A', 'B', 'C'].map(v => {
+  winning.variantStats = [...config.SCRIPTED_VARIANTS, 'E'].map(v => {
     const s = vByVariant[v] || { sent: 0, replied: 0, booked: 0 };
     const contacts = vContactsByVariant[v]?.size || 0;
     return {
@@ -923,7 +924,7 @@ function getVariantStats() {
     if (m.booked)           byVariant[v].booked++;
   }
 
-  return ['A', 'B', 'C'].map(v => {
+  return [...config.SCRIPTED_VARIANTS, 'E'].map(v => {
     const s = byVariant[v] || { sent: 0, replied: 0, booked: 0 };
     const contacts = contactsByVariant[v]?.size || 0;
     return {
@@ -1018,7 +1019,8 @@ async function runLlmAnalysis(patterns) {
       .map(v =>
         `  Variant ${v.variant}: ${v.sent} msgs sent | Reply: ${v.replyRate !== null ? v.replyRate + '%' : '—'} | Booked: ${v.booked} | Book Rate: ${v.bookingRate !== null ? v.bookingRate + '%' : '—'} | Contacts: ${v.contactsAssigned}`
       ).join('\n');
-    summaryParts.push(`=== A/B/C Discovery Script Variant Performance ===\n${variantLines}`);
+    const variantLabel = [...config.SCRIPTED_VARIANTS, 'E'].join('/');
+    summaryParts.push(`=== ${variantLabel} Discovery Script Variant Performance ===\n${variantLines}`);
   }
 
   const patternSummary = summaryParts.join('\n\n');
