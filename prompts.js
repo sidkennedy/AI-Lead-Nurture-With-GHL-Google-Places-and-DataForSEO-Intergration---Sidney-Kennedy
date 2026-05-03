@@ -556,13 +556,13 @@ function reset(name) {
  * Return the list of currently-enabled variants (['A'], ['A','B'], etc.)
  */
 function getEnabledVariants() {
-  const all = [...config.SCRIPTED_VARIANTS, 'E'];
+  const all = [...config.SCRIPTED_VARIANTS];
   return all.filter(v => get(`conversationPrompt.${v}.enabled`) === 'true');
 }
 
 /**
  * Set enabled state for a specific variant.
- * @param {string} variant — any letter in SCRIPTED_VARIANTS, or 'E'
+ * @param {string} variant — any letter in SCRIPTED_VARIANTS
  * @param {boolean} enabled
  */
 function setVariantEnabled(variant, enabled) {
@@ -582,7 +582,7 @@ function pickVariant(allContacts) {
   const enabled = getEnabledVariants();
   if (enabled.length === 0) return null;
   if (enabled.length === 1) return enabled[0];
-  const counts = Object.fromEntries([...config.SCRIPTED_VARIANTS, 'E'].map(v => [v, 0]));
+  const counts = Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, 0]));
   for (const c of Object.values(allContacts)) {
     if (c.variant && counts[c.variant] !== undefined) counts[c.variant]++;
   }

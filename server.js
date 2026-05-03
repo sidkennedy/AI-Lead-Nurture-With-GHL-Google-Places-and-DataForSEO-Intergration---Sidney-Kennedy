@@ -2832,7 +2832,7 @@ app.post('/api/admin/backfill-variants', requireAdmin, (req, res) => {
   // Respect currently-enabled variants so backfill honours the same pool
   // as new-contact assignment (pickVariant uses getEnabledVariants() too).
   const enabledV = prompts.getEnabledVariants();
-  const backfillVariants = enabledV.length > 0 ? enabledV : [...config.SCRIPTED_VARIANTS, 'E'];
+  const backfillVariants = enabledV.length > 0 ? enabledV : [...config.SCRIPTED_VARIANTS];
   // Count current assignments to continue the round-robin fairly
   const counts = Object.fromEntries(backfillVariants.map(v => [v, 0]));
   for (const c of Object.values(all)) {
@@ -2901,7 +2901,7 @@ app.post('/api/admin/reset-variants', requireAdmin, async (req, res) => {
 
 app.post('/admin/variants/:variant/enabled', requireAdmin, (req, res) => {
   const { variant } = req.params;
-  const allVariants = [...config.SCRIPTED_VARIANTS, 'E'];
+  const allVariants = [...config.SCRIPTED_VARIANTS];
   if (!allVariants.includes(variant)) return res.status(400).json({ error: `Invalid variant. Must be one of: ${allVariants.join(', ')}.` });
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled field must be a boolean.' });
@@ -2927,10 +2927,10 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
     const cutoff = days ? Date.now() - days * 86400000 : null;
 
     const _emptyCount = () => ({ assigned: 0, repliedOnce: 0, replied4: 0, booked: 0, optedOut: 0 });
-    const counts = Object.fromEntries([...config.SCRIPTED_VARIANTS, 'E'].map(v => [v, _emptyCount()]));
+    const counts = Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _emptyCount()]));
 
     // Step funnel tracking: collect contacts per variant keyed by their currentStep
-    const stepRaw = Object.fromEntries([...config.SCRIPTED_VARIANTS, 'E'].map(v => [v, []]));
+    const stepRaw = Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, []]));
 
     // Track which lead forms are present in the data so the dashboard can
     // render filter chips dynamically (no hard-coded form list).
@@ -3019,13 +3019,8 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
       return desc;
     }
 
-    const variantECombinedText = ['conversationPrompt.E.opening', 'conversationPrompt.E.branchA',
-      'conversationPrompt.E.branchB', 'conversationPrompt.E.branchC', 'conversationPrompt.E.branchD']
-      .map(k => prompts.get(k) || '').join('\n\n');
-
     const stepDescs = {
-      ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _extractStepDescs(variantPromptKeys[v])])),
-      E: _extractStepDescsFromText(variantECombinedText)
+      ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _extractStepDescs(variantPromptKeys[v])]))
     };
 
     // Column count: max prompt-defined step across all variants, clamped to 7.
@@ -3058,8 +3053,7 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
     }
 
     const stepDataByVariant = {
-      ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _buildStepData(v, stepRaw[v], counts[v].assigned)])),
-      E: _buildStepData('E', stepRaw.E, counts.E.assigned)
+      ...Object.fromEntries(config.SCRIPTED_VARIANTS.map(v => [v, _buildStepData(v, stepRaw[v], counts[v].assigned)]))
     };
 
     const pct = (n, d) => d > 0 ? Math.round((n / d) * 100) : null;
@@ -3082,10 +3076,10 @@ app.get('/api/brain/variants', requireAdmin, async (req, res) => {
       return x / (x + y);
     }
 
-    const ALL_VARIANTS = [...config.SCRIPTED_VARIANTS, 'E'];
+    const ALL_VARIANTS = [...config.SCRIPTED_VARIANTS];
     const MIN_CONTACTS_FOR_PBEST = 3; // suppress P(Best) when sample is too small to mean anything
     const SAMPLES = 50000;
-    const activeVariants = ALL_VARIANTS.filter(v => counts[v].assigned >= MIN_CONTACTS_FOR_PBEST);
+    const activeVariants = ALL_VARIANTS.filter(v => counts[v] && counts[v].assigned >= MIN_CONTACTS_FOR_PBEST);
     const wins = Object.fromEntries(ALL_VARIANTS.map(v => [v, 0]));
 
     if (activeVariants.length >= 2) {
@@ -5697,18 +5691,6 @@ function buildPromptEditorPage(adminKey, promptsList) {
     notes: prompts.get(`conversationPrompt.${v}.notes`) || ''
   })));
 
-  // Build Variant E data — all 6 editable prompt keys + VSL URL + enabled flag
-  const variantEEnabled = prompts.get('conversationPrompt.E.enabled') === 'true';
-  const variantETabsJson = JSON.stringify([
-    { tab: 'Opening', key: 'conversationPrompt.E.opening',  label: 'Opening Sequence (Steps 1–3)', description: 'Hook, transition, Whack-a-Mole menu and routing logic.' },
-    { tab: 'Shared Rules', key: 'conversationPrompt.E.shared', label: 'Shared Rules Block', description: 'Persona, step markers, PRACTICE_DETECTED, off-script handling, HARD CAP, booking/handoff markers. Prepended to every branch.' },
-    { tab: 'Branch A', key: 'conversationPrompt.E.branchA', label: 'Branch A — Insurance / Eligibility', description: 'Path A script (Steps 10–29): insurance checks, Availity, NaviNet, eligibility automation.' },
-    { tab: 'Branch B', key: 'conversationPrompt.E.branchB', label: 'Branch B — New Patients / Leads',  description: 'Path B script (Steps 30–49): patient acquisition, Gray Gold mining, lead nurture.' },
-    { tab: 'Branch C', key: 'conversationPrompt.E.branchC', label: 'Branch C — Faxes / Intake Forms',  description: 'Path C script (Steps 50–69): paperless workflow, Shield fax reader, Blueprint/Sycle sync.' },
-    { tab: 'Branch D', key: 'conversationPrompt.E.branchD', label: 'Branch D — Time / After-Hours',    description: 'Path D script (Steps 70–89): Virtual Front Desk, after-hours burnout, time recovery.' }
-  ].map(t => ({ ...t, current: prompts.get(t.key) || '' })));
-  const variantEVslUrl = prompts.get('conversationPrompt.E.vslUrl') || '';
-
   // Base conversation script — used as the underlying template for all scripted variants
   const _variantLetters = config.SCRIPTED_VARIANTS.join('/');
   const baseConvPrompt = { name: 'conversationPrompt', label: `Base Discovery Script (${_variantLetters} Template)`, description: `The underlying script all scripted variants started from. Edit individual variants in the ${_variantLetters} section above — edits here are not applied to variants that already have their own saved copy.`, current: prompts.get('conversationPrompt') || '', isModified: (prompts.listAll().find(p => p.name === 'conversationPrompt') || {}).isModified || false };
@@ -5854,9 +5836,6 @@ textarea:focus{border-color:#2dd4bf;box-shadow:0 0 0 4px rgba(45,212,191,.12)}
 const ADMIN_KEY = ${JSON.stringify(adminKey)};
 const ALL_PROMPTS = ${promptsJson};
 const VARIANTS = ${variantsJson};
-const VARIANT_E_TABS = ${variantETabsJson};
-const VARIANT_E_VSL_URL = ${JSON.stringify(variantEVslUrl)};
-const VARIANT_E_ENABLED = ${JSON.stringify(variantEEnabled)};
 const BASE_CONV_PROMPT = ${JSON.stringify(baseConvPrompt)};
 
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
@@ -5955,7 +5934,7 @@ function renderVariantSection() {
       <div id="variant-panels">\${panelsHtml}</div>
       <div style="margin-top:26px;border-top:1px solid rgba(203,213,225,.6);padding-top:20px">
         <div style="font-size:14px;font-weight:800;color:#0f172a;margin-bottom:12px;letter-spacing:-.01em">Performance Comparison</div>
-        <div id="variant-stats-table"><span style="font-size:13px;color:#94a3b8">Loading stats\u2026</span></div>
+        <div id="variant-stats-table"><span style="font-size:13px;color:#94a3b8">No data yet — run some conversations to see comparison stats here.</span></div>
       </div>
       <div style="margin-top:24px;border-top:1px solid rgba(203,213,225,.6);padding-top:20px">
         <div style="font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Data Reset</div>
@@ -5967,7 +5946,8 @@ function renderVariantSection() {
   \`;
 
   const enabledCount = VARIANTS.filter(v => v.enabled).length;
-  const sec = makeCollapsibleSection('abcd', 'A / B / C / D Discovery Scripts', enabledCount + ' of 4 enabled', true, innerHtml);
+  const enabledLabel = enabledCount > 0 ? enabledCount + ' of ' + VARIANTS.length + ' enabled' : 'none enabled';
+  const sec = makeCollapsibleSection('abcd', 'Discovery Scripts', enabledLabel, true, innerHtml);
   document.getElementById('sections-root').appendChild(sec);
 
   // Bind char counters
@@ -5977,150 +5957,9 @@ function renderVariantSection() {
       document.getElementById('vchars-' + vd.variant).textContent = ta.value.length + ' chars';
     });
   });
-
-  loadVariantStats();
 }
 
-// ─── Variant E Section ────────────────────────────────────────────────────────
 
-let _activeETab = 'Opening';
-
-function renderVariantESection() {
-  const tabsHtml = VARIANT_E_TABS.map(t =>
-    \`<button class="variant-tab\${t.tab === _activeETab ? ' active' : ''}" onclick="setETab('\${t.tab}')">\${escapeHtml(t.tab)}</button>\`
-  ).join('');
-
-  const panelsHtml = VARIANT_E_TABS.map(t => {
-    const isActive = t.tab === _activeETab;
-    const safeName = t.key.replace(/\\./g, '-');
-    return \`
-      <div class="variant-tab-panel\${isActive ? ' active' : ''}" id="evp-\${safeName}">
-        <div style="font-size:13px;color:#64748b;margin-bottom:12px;line-height:1.6">\${escapeHtml(t.description)}</div>
-        <textarea id="eta-\${safeName}" rows="18" spellcheck="false">\${escapeHtml(t.current)}</textarea>
-        <div class="actions">
-          <button class="btn btn-save" onclick="saveEPrompt('\${t.key}', '\${safeName}')">Save \${escapeHtml(t.tab)}</button>
-          <span class="status" id="estatus-\${safeName}"></span>
-          <span class="char-count" id="echars-\${safeName}">\${t.current.length} chars</span>
-        </div>
-      </div>
-    \`;
-  }).join('');
-
-  const innerHtml = \`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-      <div style="font-size:13px;color:#64748b;line-height:1.5">Branching adaptive brain with 4 pain-point paths. Each branch is a separate script; the Shared Rules block applies to all.</div>
-      <div class="variant-toggle">
-        <span class="toggle-label \${VARIANT_E_ENABLED ? 'on' : 'off'}" id="etl-E">\${VARIANT_E_ENABLED ? 'Enabled' : 'Disabled'}</span>
-        <label class="toggle-switch" title="Enable / disable Variant E">
-          <input type="checkbox" id="etog-E" \${VARIANT_E_ENABLED ? 'checked' : ''} onchange="toggleVariantE(this.checked)">
-          <span class="toggle-track"></span>
-          <span class="toggle-thumb"></span>
-        </label>
-      </div>
-    </div>
-    <div style="margin-bottom:18px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;color:#475569;line-height:1.6">
-      <strong style="color:#0f172a">Video URL (VSL):</strong>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-        <input type="text" id="evsl-url" value="\${escapeHtml(VARIANT_E_VSL_URL)}" placeholder="https://..." style="flex:1;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:13px;font-family:inherit;color:#0f172a;background:#fff;outline:none">
-        <button class="btn btn-save" style="padding:9px 16px;white-space:nowrap" onclick="saveEVslUrl()">Save URL</button>
-        <span class="status" id="evsl-status"></span>
-      </div>
-      <div style="margin-top:6px;font-size:11px;color:#94a3b8">Sent as [Link] in Steps 12/32/52/72. Required before Variant E goes live.</div>
-    </div>
-    <div class="variant-tabs">\${tabsHtml}</div>
-    <div id="e-variant-panels">\${panelsHtml}</div>
-  \`;
-
-  const sec = makeCollapsibleSection('varE', 'Variant E — Branching Brain (Sidney)', 'Opening + 4 Branches', false, innerHtml);
-  document.getElementById('sections-root').appendChild(sec);
-
-  // Bind char counters
-  VARIANT_E_TABS.forEach(t => {
-    const safeName = t.key.replace(/\\./g, '-');
-    const ta = document.getElementById('eta-' + safeName);
-    if (ta) ta.addEventListener('input', () => {
-      document.getElementById('echars-' + safeName).textContent = ta.value.length + ' chars';
-    });
-  });
-}
-
-function setETab(tab) {
-  _activeETab = tab;
-  document.querySelectorAll('#csbody-varE .variant-tab').forEach(btn => {
-    btn.classList.toggle('active', btn.textContent === tab);
-  });
-  VARIANT_E_TABS.forEach(t => {
-    const safeName = t.key.replace(/\\./g, '-');
-    const panel = document.getElementById('evp-' + safeName);
-    if (panel) panel.classList.toggle('active', t.tab === tab);
-  });
-}
-
-async function saveEPrompt(key, safeName) {
-  const ta = document.getElementById('eta-' + safeName);
-  const statusEl = document.getElementById('estatus-' + safeName);
-  if (!ta) return;
-  showModal('Saving\u2026', 'Saving ' + key + '\u2026', false);
-  try {
-    const res = await fetch('/admin/prompts/' + encodeURIComponent(key), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
-      body: JSON.stringify({ text: ta.value })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    const timeStr = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    statusEl.innerHTML = '\u2713 Saved <span class="last-saved">at ' + timeStr + '</span>';
-    statusEl.className = 'status status-ok';
-    showModal('Saved', key + ' saved at ' + timeStr + '.', false);
-    const t = VARIANT_E_TABS.find(x => x.key === key);
-    if (t) t.current = ta.value;
-  } catch(err) {
-    statusEl.textContent = '\u2717 ' + err.message;
-    statusEl.className = 'status status-err';
-    showModal('Save Failed', err.message, true);
-  }
-}
-
-async function saveEVslUrl() {
-  const input = document.getElementById('evsl-url');
-  const statusEl = document.getElementById('evsl-status');
-  if (!input) return;
-  try {
-    const res = await fetch('/admin/prompts/' + encodeURIComponent('conversationPrompt.E.vslUrl'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
-      body: JSON.stringify({ text: input.value.trim() })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    statusEl.textContent = '\u2713 Saved';
-    statusEl.className = 'status status-ok';
-    setTimeout(() => { statusEl.textContent = ''; }, 3000);
-  } catch(err) {
-    statusEl.textContent = '\u2717 ' + err.message;
-    statusEl.className = 'status status-err';
-  }
-}
-
-async function toggleVariantE(enabled) {
-  const labelEl = document.getElementById('etl-E');
-  const chk = document.getElementById('etog-E');
-  try {
-    const res = await fetch('/admin/variants/E/enabled', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-key': ADMIN_KEY },
-      body: JSON.stringify({ enabled })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    labelEl.textContent = enabled ? 'Enabled' : 'Disabled';
-    labelEl.className = 'toggle-label ' + (enabled ? 'on' : 'off');
-  } catch(err) {
-    if (chk) chk.checked = !enabled;
-    showModal('Toggle Failed', 'Could not toggle Variant E: ' + err.message, true);
-  }
-}
 
 function setTab(v) {
   _activeTab = v;
@@ -6343,10 +6182,7 @@ async function resetVariantData() {
 
 // Keys managed by dedicated sections — excluded from generic prompt renderer
 const EXCLUDE_FROM_GENERIC = new Set([
-  'conversationPrompt',
-  'conversationPrompt.E.vslUrl','conversationPrompt.E.enabled','conversationPrompt.E.shared',
-  'conversationPrompt.E.opening','conversationPrompt.E.branchA','conversationPrompt.E.branchB',
-  'conversationPrompt.E.branchC','conversationPrompt.E.branchD'
+  'conversationPrompt'
 ]);
 
 function buildPromptCard(p) {
@@ -6532,7 +6368,6 @@ async function resetPrompt(name) {
 }
 
 renderVariantSection();
-renderVariantESection();
 renderPrompts();
 </script>
 </body>
@@ -6902,7 +6737,6 @@ h1{font-size:clamp(42px,7vw,74px);line-height:.95;font-weight:900;letter-spacing
           <button class="vpill B" data-v="B" onclick="pickVariant('B')">B</button>
           <button class="vpill C" data-v="C" onclick="pickVariant('C')">C</button>
           <button class="vpill D" data-v="D" onclick="pickVariant('D')">D</button>
-          <button class="vpill E" data-v="E" onclick="pickVariant('E')">E</button>
           <button class="vpill CUSTOM" data-v="CUSTOM" onclick="pickVariant('CUSTOM')">Custom</button>
         </div>
       </div>
