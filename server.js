@@ -7547,6 +7547,18 @@ h1{font-size:clamp(34px,5vw,50px);font-weight:900;text-align:center;margin-botto
 .status.err{color:#dc2626}
 .preview{margin-top:18px;background:#0f172a;color:#cbd5e1;border-radius:14px;padding:16px;font-family:'SF Mono',monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap;max-height:400px;overflow:auto;display:none}
 .preview.open{display:block}
+/* New-variant modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;pointer-events:none;transition:opacity .18s}
+.modal-overlay.open{opacity:1;pointer-events:all}
+.modal{background:#fff;border-radius:20px;padding:28px 26px 22px;box-shadow:0 24px 60px rgba(15,23,42,.18);width:100%;max-width:400px;transform:translateY(12px);transition:transform .18s}
+.modal-overlay.open .modal{transform:translateY(0)}
+.modal h3{font-size:16px;font-weight:800;margin-bottom:6px;color:#0f172a}
+.modal p{font-size:13px;color:#64748b;line-height:1.55;margin-bottom:16px}
+.modal input{width:100%;padding:11px 14px;border:1px solid #cbd5e1;border-radius:10px;font-family:'SF Mono',monospace;font-size:14px;font-weight:600;color:#0f172a;outline:none;margin-bottom:6px}
+.modal input:focus{border-color:#0ea56f;box-shadow:0 0 0 3px rgba(16,185,129,.12)}
+.modal-hint{font-size:11.5px;color:#94a3b8;margin-bottom:18px;font-family:'SF Mono',monospace}
+.modal-err{font-size:12px;color:#dc2626;font-weight:600;min-height:18px;margin-bottom:10px}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
 </style></head>
 <body>
 <a class="back-link" href="/admin?key=${adminKey}">&larr; Back to Dashboard</a>
@@ -7558,7 +7570,7 @@ h1{font-size:clamp(34px,5vw,50px);font-weight:900;text-align:center;margin-botto
   <div class="card side">
     <h3>Variants</h3>
     <div class="var-list" id="varList"></div>
-    <button class="btn btn-primary btn-block" onclick="newVariant()">+ New Variant</button>
+    <button class="btn btn-primary btn-block" onclick="openNewVariantModal()">+ New Variant</button>
   </div>
 
   <div class="card" id="editor">
@@ -7627,11 +7639,22 @@ function select(id) {
   showEditor();
 }
 
-function newVariant() {
-  const id = prompt('Variant ID (1–16 chars, A-Z 0-9 _ -). Use a single letter like A, B, C if you can:');
-  if (!id) return;
-  if (!/^[A-Za-z0-9_-]{1,16}$/.test(id)) { alert('Invalid id'); return; }
-  if (variants.some(v => v.id === id)) { alert('That id already exists'); return; }
+function openNewVariantModal() {
+  document.getElementById('nv-input').value = '';
+  document.getElementById('nv-err').textContent = '';
+  document.getElementById('nvModal').classList.add('open');
+  setTimeout(() => document.getElementById('nv-input').focus(), 80);
+}
+function closeNewVariantModal() {
+  document.getElementById('nvModal').classList.remove('open');
+}
+function confirmNewVariant() {
+  const id = document.getElementById('nv-input').value.trim();
+  const err = document.getElementById('nv-err');
+  if (!id) { err.textContent = 'Please enter an ID.'; return; }
+  if (!/^[A-Za-z0-9_-]{1,16}$/.test(id)) { err.textContent = 'Only letters, numbers, _ and - allowed (max 16 chars).'; return; }
+  if (variants.some(v => v.id === id)) { err.textContent = 'That ID already exists — pick another.'; return; }
+  closeNewVariantModal();
   current = { id, name: 'Variant ' + id, steps: [] };
   isNew = true;
   showEditor();
@@ -7749,6 +7772,23 @@ function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
 
 load().catch(err => alert('Failed to load variants: ' + err.message));
 </script>
+
+<!-- New-variant modal -->
+<div class="modal-overlay" id="nvModal" onclick="if(event.target===this)closeNewVariantModal()">
+  <div class="modal">
+    <h3>Name your variant</h3>
+    <p>Give it a short ID — you'll use this to select it in the playground and assign it to leads.</p>
+    <input id="nv-input" type="text" placeholder="e.g. D1, GYM, launch-v2" maxlength="16"
+      oninput="document.getElementById('nv-err').textContent=''"
+      onkeydown="if(event.key==='Enter')confirmNewVariant();if(event.key==='Escape')closeNewVariantModal()">
+    <div class="modal-hint">Letters, numbers, _ and - only &middot; max 16 chars</div>
+    <div class="modal-err" id="nv-err"></div>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeNewVariantModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmNewVariant()">Create Variant</button>
+    </div>
+  </div>
+</div>
 </body></html>`;
 }
 
