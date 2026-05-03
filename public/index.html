@@ -70,7 +70,8 @@ ul.bullets{margin:8px 0 0 20px;color:#475569;font-size:14.5px;line-height:1.8}
       <li><strong>ANTHROPIC_API_KEY</strong> — get one at <code>console.anthropic.com</code>. Powers all AI replies. <em>Required.</em></li>
       <li><strong>DATABASE_URL</strong> — Replit gives you a free Postgres under <strong>Tools &rarr; Database</strong>; copy its connection string here. <em>Required.</em></li>
       <li><strong>GHL_API_KEY</strong> + <strong>GHL_LOCATION_ID</strong> — your GoHighLevel sub-account credentials. <em>Required for live SMS.</em></li>
-      <li><strong>GOOGLE_PLACES_KEY</strong> — enables business lookup &amp; visibility scans. <em>Optional but recommended.</em></li>
+      <li><strong>DATAFORSEO_LOGIN</strong> + <strong>DATAFORSEO_PASSWORD</strong> — powers the visibility scanner (primary path). The engine sweeps the local Google Maps grid around the prospect's business and feeds the AI live competitive ranking data. Sign up at <code>dataforseo.com</code>. <em>Recommended.</em></li>
+      <li><strong>GOOGLE_PLACES_KEY</strong> — used for prospect business lookup (name, address, reviews). Also the fallback scanner if DataForSEO is unavailable. <em>Recommended.</em></li>
       <li><strong>DEV_MODE</strong> set to <code>1</code> — turn this on while you build &amp; test, so nothing accidentally sends real texts. <em>Optional.</em></li>
     </ol>
     <div class="note" style="margin-top:18px"><strong>What "ADMIN_KEY" actually does:</strong> the admin URLs need <code>?key=YOUR_ADMIN_KEY</code> appended (e.g. <code>/admin?key=k9_x4vQ-8sB2</code>). It's a single shared password — invent it, save it as a Replit Secret, then use it in every admin link. If you click "Open the Admin" without setting it first, you'll land on a guided setup page that walks you through it.</div>

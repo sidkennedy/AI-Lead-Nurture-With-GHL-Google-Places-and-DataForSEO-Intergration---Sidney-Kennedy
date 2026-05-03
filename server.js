@@ -7785,7 +7785,8 @@ ${showSecretSteps ? `
     <dt><code>GHL_API_KEY</code></dt><dd>Required for live SMS. Your GoHighLevel sub-account API key.</dd>
     <dt><code>GHL_LOCATION_ID</code></dt><dd>Required for live SMS. The GHL location/sub-account this engine sends from.</dd>
     <dt><code>GHL_WEBHOOK_SECRET</code></dt><dd>Recommended. Protects your inbound webhook from spoofing.</dd>
-    <dt><code>GOOGLE_PLACES_KEY</code></dt><dd>Optional. Enables Google Maps lookup of the prospect's business so the AI can reference their address &amp; reviews.</dd>
+    <dt><code>DATAFORSEO_LOGIN</code> + <code>DATAFORSEO_PASSWORD</code></dt><dd>Recommended. Powers the visibility scanner — the engine pings the local Google Maps grid around the prospect's business and tells the AI exactly where they rank vs competitors. This is the <b>primary</b> scan path. Sign up at dataforseo.com.</dd>
+    <dt><code>GOOGLE_PLACES_KEY</code></dt><dd>Recommended. Used for the prospect business lookup (name + address + reviews). Also acts as the <b>fallback</b> scanner if DataForSEO fails or is not set.</dd>
     <dt><code>DEV_MODE</code></dt><dd>Optional. Set to <code>1</code> while testing — disables the scheduler &amp; outbound SMS so nothing actually sends.</dd>
   </dl>
   <div class="tip"><b>Local-only testing?</b> Set <code>ADMIN_KEY</code> + <code>ANTHROPIC_API_KEY</code> + <code>DATABASE_URL</code> + <code>DEV_MODE=1</code>. You can build variants, run the playground simulator, and design conversations without ever wiring up GHL or sending real texts.</div>
